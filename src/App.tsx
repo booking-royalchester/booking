@@ -3103,20 +3103,6 @@ function App() {
                 >
                   Race events
                 </button>
-                <button
-                  className="menu-item"
-                  type="button"
-                  onClick={() => {
-                    setIsMenuOpen(false)
-                    setShowNewBooking(false)
-                    setEditingBooking(null)
-                    setEditingTemplate(null)
-                    setEditingBoat(null)
-                    setViewMode('readme')
-                  }}
-                >
-                  README
-                </button>
                 {isAdmin ? (
                   <button
                     className="menu-item"
@@ -3244,6 +3230,20 @@ function App() {
                   }}
                 >
                   Profile
+                </button>
+                <button
+                  className="menu-item"
+                  type="button"
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    setShowNewBooking(false)
+                    setEditingBooking(null)
+                    setEditingTemplate(null)
+                    setEditingBoat(null)
+                    setViewMode('readme')
+                  }}
+                >
+                  README
                 </button>
               </div>
             </>
@@ -3678,8 +3678,8 @@ function App() {
                 </table>
               </div>
             ) : viewMode === 'readme' ? (
-              <div className="page-pad">
-                <section className="panel login-panel auth-card single">
+              <div className="page-pad readme-page">
+                <section className="panel login-panel auth-card single readme-card">
                   <div className="auth-form">
                     <div className="panel-header">
                       <h2>README</h2>
@@ -4248,6 +4248,7 @@ function App() {
       viewMode !== 'profile' &&
       viewMode !== 'raceEvents' &&
       viewMode !== 'riskAssessments' &&
+      viewMode !== 'readme' &&
       viewMode !== 'pendingConfirmations' &&
       (viewMode !== 'schedule' || !isSelectedDateInPast)
         ? createPortal(

@@ -92,6 +92,16 @@ body {
   padding-right: var(--app-pad);
 }
 
+.readme-page {
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  padding-bottom: 112px;
+}
+
+.readme-card {
+  margin-bottom: 0;
+}
+
 .header-menu {
   position: fixed;
   top: 46px;
