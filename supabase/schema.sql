@@ -39,6 +39,22 @@ create table if not exists race_event_boats (
   unique (race_event_id, boat_id)
 );
 
+create table if not exists coordinator_groups (
+  id uuid primary key default gen_random_uuid(),
+  coordinator_member_id uuid not null references members(id) on delete cascade,
+  title text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists coordinator_group_members (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references coordinator_groups(id) on delete cascade,
+  email text not null,
+  created_at timestamptz not null default now(),
+  unique (group_id, email)
+);
+
 create table if not exists bookings (
   id uuid primary key default gen_random_uuid(),
   boat_id uuid not null references boats(id) on delete cascade,
@@ -196,6 +212,8 @@ alter table template_confirmations enable row level security;
 alter table boat_permissions enable row level security;
 alter table race_events enable row level security;
 alter table race_event_boats enable row level security;
+alter table coordinator_groups enable row level security;
+alter table coordinator_group_members enable row level security;
 
 create policy "Members readable for login" on members
   for select to anon, authenticated
@@ -295,6 +313,75 @@ create policy "Race event boats delete for admins" on race_event_boats
     exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Coordinator groups readable for owner" on coordinator_groups
+  for select to authenticated
+  using (coordinator_member_id = (select id from members where email = auth.email()));
+
+create policy "Coordinator groups insert for owner" on coordinator_groups
+  for insert to authenticated
+  with check (coordinator_member_id = (select id from members where email = auth.email()));
+
+create policy "Coordinator groups update for owner" on coordinator_groups
+  for update to authenticated
+  using (coordinator_member_id = (select id from members where email = auth.email()))
+  with check (coordinator_member_id = (select id from members where email = auth.email()));
+
+create policy "Coordinator groups delete for owner" on coordinator_groups
+  for delete to authenticated
+  using (coordinator_member_id = (select id from members where email = auth.email()));
+
+create policy "Coordinator group members readable for owner" on coordinator_group_members
+  for select to authenticated
+  using (
+    exists (
+      select 1
+      from coordinator_groups cg
+      where cg.id = group_id
+        and cg.coordinator_member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Coordinator group members insert for owner" on coordinator_group_members
+  for insert to authenticated
+  with check (
+    exists (
+      select 1
+      from coordinator_groups cg
+      where cg.id = group_id
+        and cg.coordinator_member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Coordinator group members update for owner" on coordinator_group_members
+  for update to authenticated
+  using (
+    exists (
+      select 1
+      from coordinator_groups cg
+      where cg.id = group_id
+        and cg.coordinator_member_id = (select id from members where email = auth.email())
+    )
+  )
+  with check (
+    exists (
+      select 1
+      from coordinator_groups cg
+      where cg.id = group_id
+        and cg.coordinator_member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Coordinator group members delete for owner" on coordinator_group_members
+  for delete to authenticated
+  using (
+    exists (
+      select 1
+      from coordinator_groups cg
+      where cg.id = group_id
+        and cg.coordinator_member_id = (select id from members where email = auth.email())
     )
   );
 

@@ -131,6 +131,19 @@ type RaceEventBoatLink = {
   boats?: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null
 }
 
+type CoordinatorGroupMember = {
+  id: string
+  email: string
+}
+
+type CoordinatorGroup = {
+  id: string
+  title: string
+  coordinator_member_id: string
+  coordinator_group_members?: CoordinatorGroupMember[] | null
+  created_at?: string
+}
+
 type RaceEvent = {
   id: string
   title: string
@@ -456,6 +469,11 @@ function App() {
   const [signupConfirm, setSignupConfirm] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPasswords, setShowPasswords] = useState({
+    login: false,
+    signup: false,
+    reset: false,
+  })
   const [selectedDate, setSelectedDate] = useState(getTodayString)
   const [selectedTemplateWeekday, setSelectedTemplateWeekday] = useState(
     getWeekdayIndex(getTodayString()),
@@ -467,6 +485,7 @@ function App() {
     | 'templates'
     | 'boats'
     | 'access'
+    | 'groups'
     | 'profile'
     | 'readme'
     | 'raceEvents'
@@ -528,6 +547,14 @@ function App() {
   const [pendingTemplateActionId, setPendingTemplateActionId] = useState<string | null>(null)
   const [selectedPendingBookingId, setSelectedPendingBookingId] = useState<string | null>(null)
   const [showAccessEditor, setShowAccessEditor] = useState(false)
+  const [showGroupEditor, setShowGroupEditor] = useState(false)
+  const [editingGroup, setEditingGroup] = useState<CoordinatorGroup | null>(null)
+  const [coordinatorGroups, setCoordinatorGroups] = useState<CoordinatorGroup[]>([])
+  const [groupForm, setGroupForm] = useState({
+    title: '',
+    emailInput: '',
+    emails: [] as string[],
+  })
   const [isRiskAssessmentLoading, setIsRiskAssessmentLoading] = useState(false)
   const [riskAssessmentForm, setRiskAssessmentForm] = useState({
     coordinator_name: '',
@@ -932,6 +959,34 @@ function App() {
       })),
     )
   }, [])
+
+  const fetchCoordinatorGroups = useCallback(async () => {
+    if (!session || !currentMember || isGuest) {
+      setCoordinatorGroups([])
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('coordinator_groups')
+      .select('id, title, coordinator_member_id, created_at, coordinator_group_members(id,email)')
+      .eq('coordinator_member_id', currentMember.id)
+      .order('title', { ascending: true })
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setCoordinatorGroups(
+      (data ?? []).map((group) => ({
+        ...group,
+        coordinator_group_members: (group.coordinator_group_members ?? []).map((member) => ({
+          id: member.id,
+          email: member.email,
+        })),
+      })),
+    )
+  }, [currentMember, isGuest, session])
 
   const fetchRiskAssessments = useCallback(async () => {
     if (!session) {
@@ -1449,9 +1504,16 @@ function App() {
   }, [canManageAccess, fetchAllowedMembers, viewMode])
 
   useEffect(() => {
+    if (viewMode === 'groups' && canManageAccess) {
+      fetchCoordinatorGroups()
+    }
+  }, [canManageAccess, fetchCoordinatorGroups, viewMode])
+
+  useEffect(() => {
     if (
       (viewMode === 'templates' && !isAdmin) ||
       (viewMode === 'access' && !canManageAccess) ||
+      (viewMode === 'groups' && !canManageAccess) ||
       (viewMode === 'riskAssessments' && !isAdmin)
     ) {
       setViewMode('schedule')
@@ -3335,6 +3397,156 @@ function App() {
     fetchAllowedMembers()
   }
 
+  const resetGroupForm = () => {
+    setShowGroupEditor(false)
+    setEditingGroup(null)
+    setGroupForm({
+      title: '',
+      emailInput: '',
+      emails: [],
+    })
+  }
+
+  const openGroupEditor = (group?: CoordinatorGroup) => {
+    setError(null)
+    setStatus(null)
+    setShowGroupEditor(true)
+    setEditingGroup(group ?? null)
+    setGroupForm({
+      title: group?.title ?? '',
+      emailInput: '',
+      emails: (group?.coordinator_group_members ?? []).map((member) => member.email),
+    })
+  }
+
+  const handleAddGroupEmail = () => {
+    const email = groupForm.emailInput.trim().toLowerCase()
+    if (!email) {
+      return
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError('Enter a valid email address.')
+      return
+    }
+    if (groupForm.emails.includes(email)) {
+      setGroupForm((prev) => ({ ...prev, emailInput: '' }))
+      return
+    }
+    setGroupForm((prev) => ({
+      ...prev,
+      emailInput: '',
+      emails: [...prev.emails, email],
+    }))
+  }
+
+  const handleSaveGroup = async () => {
+    if (!currentMember || !canManageAccess) {
+      setError('You do not have permission to manage groups.')
+      return
+    }
+
+    const title = groupForm.title.trim()
+    if (!title) {
+      setError('Enter a group title.')
+      return
+    }
+
+    const emails = Array.from(
+      new Set(groupForm.emails.map((email) => email.trim().toLowerCase())),
+    ).filter(Boolean)
+
+    if (groupForm.emailInput.trim()) {
+      const extraEmail = groupForm.emailInput.trim().toLowerCase()
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(extraEmail) && !emails.includes(extraEmail)) {
+        emails.push(extraEmail)
+      }
+    }
+
+    setError(null)
+    setStatus(null)
+
+    let groupId = editingGroup?.id ?? null
+    if (editingGroup) {
+      const { error } = await supabase
+        .from('coordinator_groups')
+        .update({
+          title,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', editingGroup.id)
+
+      if (error) {
+        setError(error.message)
+        return
+      }
+    } else {
+      const { data, error } = await supabase
+        .from('coordinator_groups')
+        .insert({
+          title,
+          coordinator_member_id: currentMember.id,
+        })
+        .select('id')
+        .single()
+
+      if (error) {
+        setError(error.message)
+        return
+      }
+      groupId = data.id
+    }
+
+    if (!groupId) {
+      setError('Unable to save group.')
+      return
+    }
+
+    const { error: deleteError } = await supabase
+      .from('coordinator_group_members')
+      .delete()
+      .eq('group_id', groupId)
+
+    if (deleteError) {
+      setError(deleteError.message)
+      return
+    }
+
+    if (emails.length > 0) {
+      const { error: insertError } = await supabase
+        .from('coordinator_group_members')
+        .insert(emails.map((email) => ({ group_id: groupId, email })))
+
+      if (insertError) {
+        setError(insertError.message)
+        return
+      }
+    }
+
+    setStatus(editingGroup ? 'Group updated.' : 'Group created.')
+    await fetchCoordinatorGroups()
+    resetGroupForm()
+  }
+
+  const handleDeleteGroup = async () => {
+    if (!editingGroup) {
+      return
+    }
+
+    const { error } = await supabase
+      .from('coordinator_groups')
+      .delete()
+      .eq('id', editingGroup.id)
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setStatus('Group deleted.')
+    await fetchCoordinatorGroups()
+    resetGroupForm()
+  }
+
   return (
     <div
       className="app"
@@ -3999,7 +4211,6 @@ function App() {
                       <th>Start</th>
                       <th>End</th>
                       <th>Title</th>
-                      <th>Driver</th>
                       <th>Boats</th>
                     </tr>
                   </thead>
@@ -4022,7 +4233,6 @@ function App() {
                           <td>{formatDateLabel(event.start_date)}</td>
                           <td>{formatDateLabel(event.end_date)}</td>
                           <td>{event.title}</td>
-                          <td>{event.driver ?? ''}</td>
                           <td>{boatLabels.join(', ')}</td>
                         </tr>
                       )
@@ -4192,6 +4402,20 @@ function App() {
                           Push notifications are not supported in this browser.
                         </p>
                       )}
+                      {canManageAccess ? (
+                        <button
+                          className="button ghost"
+                          type="button"
+                          onClick={() => {
+                            setShowNewBooking(false)
+                            setEditingBooking(null)
+                            setEditingTemplate(null)
+                            setViewMode('groups')
+                          }}
+                        >
+                          Manage groups
+                        </button>
+                      ) : null}
                       <button className="button ghost danger" type="button" onClick={handleLogout}>
                         Logout
                       </button>
@@ -4233,6 +4457,25 @@ function App() {
                             </button>
                           ) : null}
                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : viewMode === 'groups' ? (
+              <div className="access-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Group title</th>
+                      <th>Members (emails)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {coordinatorGroups.map((group) => (
+                      <tr key={group.id} onClick={() => openGroupEditor(group)}>
+                        <td>{group.title}</td>
+                        <td>{(group.coordinator_group_members ?? []).length}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -4557,7 +4800,7 @@ function App() {
                   <label className="field">
                     <span>New password</span>
                     <input
-                      type="password"
+                      type={showPasswords.reset ? 'text' : 'password'}
                       value={newPassword}
                       onChange={(event) => setNewPassword(event.target.value)}
                     />
@@ -4565,10 +4808,20 @@ function App() {
                   <label className="field">
                     <span>Confirm password</span>
                     <input
-                      type="password"
+                      type={showPasswords.reset ? 'text' : 'password'}
                       value={confirmPassword}
                       onChange={(event) => setConfirmPassword(event.target.value)}
                     />
+                  </label>
+                  <label className="field checkbox">
+                    <input
+                      type="checkbox"
+                      checked={showPasswords.reset}
+                      onChange={(event) =>
+                        setShowPasswords((prev) => ({ ...prev, reset: event.target.checked }))
+                      }
+                    />
+                    <span>Show password</span>
                   </label>
                   <button className="button primary" type="button" onClick={handleSetPassword}>
                     {isAuthBusy ? 'Saving...' : 'Set password'}
@@ -4587,7 +4840,7 @@ function App() {
                   <label className="field">
                     <span>Create password</span>
                     <input
-                      type="password"
+                      type={showPasswords.signup ? 'text' : 'password'}
                       value={signupPassword}
                       onChange={(event) => setSignupPassword(event.target.value)}
                     />
@@ -4595,10 +4848,20 @@ function App() {
                   <label className="field">
                     <span>Confirm password</span>
                     <input
-                      type="password"
+                      type={showPasswords.signup ? 'text' : 'password'}
                       value={signupConfirm}
                       onChange={(event) => setSignupConfirm(event.target.value)}
                     />
+                  </label>
+                  <label className="field checkbox">
+                    <input
+                      type="checkbox"
+                      checked={showPasswords.signup}
+                      onChange={(event) =>
+                        setShowPasswords((prev) => ({ ...prev, signup: event.target.checked }))
+                      }
+                    />
+                    <span>Show password</span>
                   </label>
                   <button
                     className="button primary"
@@ -4655,10 +4918,20 @@ function App() {
                   <label className="field">
                     <span>Password</span>
                     <input
-                      type="password"
+                      type={showPasswords.login ? 'text' : 'password'}
                       value={loginPassword}
                       onChange={(event) => setLoginPassword(event.target.value)}
                     />
+                  </label>
+                  <label className="field checkbox">
+                    <input
+                      type="checkbox"
+                      checked={showPasswords.login}
+                      onChange={(event) =>
+                        setShowPasswords((prev) => ({ ...prev, login: event.target.checked }))
+                      }
+                    />
+                    <span>Show password</span>
                   </label>
                   <button
                     className="button primary"
@@ -4698,6 +4971,7 @@ function App() {
       !editingTemplate &&
       viewMode !== 'boats' &&
       viewMode !== 'access' &&
+      viewMode !== 'groups' &&
       viewMode !== 'profile' &&
       viewMode !== 'raceEvents' &&
       viewMode !== 'riskAssessments' &&
@@ -5750,11 +6024,84 @@ function App() {
         </div>
       ) : null}
 
+      {session && showGroupEditor ? (
+        <div className="modal-backdrop" onClick={resetGroupForm}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{editingGroup ? 'Edit group' : 'Create group'}</h3>
+            </div>
+            <div className="form-grid">
+              <label className="field">
+                <span>Group title</span>
+                <input
+                  value={groupForm.title}
+                  onChange={(event) =>
+                    setGroupForm((prev) => ({ ...prev, title: event.target.value }))
+                  }
+                />
+              </label>
+              <div className="field">
+                <span>Group members (emails)</span>
+                <div className="permission-controls">
+                  <input
+                    type="email"
+                    placeholder="member@email.com"
+                    value={groupForm.emailInput}
+                    onChange={(event) =>
+                      setGroupForm((prev) => ({ ...prev, emailInput: event.target.value }))
+                    }
+                  />
+                  <button className="button ghost small" type="button" onClick={handleAddGroupEmail}>
+                    Add
+                  </button>
+                </div>
+                <div className="selected-boat-list">
+                  {groupForm.emails.length === 0 ? (
+                    <span className="chip muted">No members selected</span>
+                  ) : (
+                    groupForm.emails.map((email) => (
+                      <button
+                        key={email}
+                        type="button"
+                        className="selected-boat-row"
+                        onClick={() =>
+                          setGroupForm((prev) => ({
+                            ...prev,
+                            emails: prev.emails.filter((item) => item !== email),
+                          }))
+                        }
+                      >
+                        <span>{email}</span>
+                        <span aria-hidden="true">x</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button className="button primary" type="button" onClick={handleSaveGroup}>
+                Save
+              </button>
+              <button className="button ghost" type="button" onClick={resetGroupForm}>
+                Cancel
+              </button>
+            </div>
+            {editingGroup ? (
+              <button className="button ghost danger delete-row" onClick={handleDeleteGroup}>
+                Delete group
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       {session &&
       !showNewBooking &&
       !editingBooking &&
       !editingTemplate &&
       !editingBoat &&
+      !showGroupEditor &&
       viewMode === 'boats' &&
       isAdmin
         ? createPortal(
@@ -5775,6 +6122,7 @@ function App() {
       !editingBooking &&
       !editingTemplate &&
       !editingBoat &&
+      !showGroupEditor &&
       viewMode === 'access' &&
       canManageAccess
         ? createPortal(
@@ -5791,6 +6139,24 @@ function App() {
               aria-label="New access"
               type="button"
             >
+              +
+            </button>,
+            document.body,
+          )
+        : null}
+
+      {session &&
+      !showNewBooking &&
+      !editingBooking &&
+      !editingTemplate &&
+      !editingBoat &&
+      !showGroupEditor &&
+      !showRaceEventEditor &&
+      !showAccessEditor &&
+      viewMode === 'groups' &&
+      canManageAccess
+        ? createPortal(
+            <button className="fab" onClick={() => openGroupEditor()} aria-label="New group" type="button">
               +
             </button>,
             document.body,
