@@ -6,7 +6,8 @@ import { supabase } from './lib/supabaseClient'
 const START_HOUR = 7.5
 const END_HOUR = 20
 const HOUR_WIDTH = 180
-const LANE_HEIGHT = 64
+const LANE_HEIGHT = 42
+const GANTT_BOTTOM_BUFFER = 24
 const BOOKING_SELECT =
   'id, boat_id, member_id, start_time, end_time, usage_status, usage_confirmed_at, usage_confirmed_by, boats(name,type), members:members!bookings_member_id_fkey(name,email)'
 const CREW_TYPE_OPTIONS = [
@@ -191,6 +192,15 @@ const getTodayString = () => {
   return `${year}-${month}-${day}`
 }
 
+const addDaysToDateString = (value: string, days: number) => {
+  const date = new Date(`${value}T12:00:00`)
+  date.setDate(date.getDate() + days)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 const formatTime = (value: string) =>
   new Date(value).toLocaleTimeString([], {
     hour: '2-digit',
@@ -243,6 +253,17 @@ const getRelatedType = (
     return null
   }
   return Array.isArray(value) ? value[0]?.type ?? null : value.type ?? null
+}
+
+const getGanttBoatDisplayName = (value: string | null | undefined) => {
+  if (!value) {
+    return 'Boat'
+  }
+  const segments = value.trim().split(/\s+/).filter(Boolean)
+  if (segments.length <= 1) {
+    return segments[0] ?? value.trim()
+  }
+  return segments[1]
 }
 
 const getRoleLabel = (role: UserRole) => {
@@ -384,6 +405,7 @@ function App() {
   const [selectedTemplateWeekday, setSelectedTemplateWeekday] = useState(
     getWeekdayIndex(getTodayString()),
   )
+  const [scheduleDisplayMode, setScheduleDisplayMode] = useState<'gantt' | 'list'>('gantt')
   const [boatTypeFilter, setBoatTypeFilter] = useState('')
   const [viewMode, setViewMode] = useState<
     | 'schedule'
@@ -1403,30 +1425,35 @@ function App() {
     }
 
     const loadBookings = async () => {
+      const daysToLoad = 7
       const dayStart = new Date(`${selectedDate}T00:00:00`)
       const dayEnd = new Date(dayStart)
-      dayEnd.setDate(dayEnd.getDate() + 1)
-      const weekday = getWeekdayIndex(selectedDate)
+      dayEnd.setDate(dayEnd.getDate() + daysToLoad)
+      const rangeEndDate = addDaysToDateString(selectedDate, daysToLoad)
 
       setIsLoading(true)
+      const bookingsQuery = supabase
+        .from('bookings')
+        .select(BOOKING_SELECT)
+        .lt('start_time', dayEnd.toISOString())
+        .gt('end_time', dayStart.toISOString())
+        .order('start_time', { ascending: true })
+      const templatesQuery = supabase
+        .from('booking_templates')
+        .select(
+          'id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
+        )
+        .order('weekday', { ascending: true })
+        .order('start_time', { ascending: true })
+      const exceptionsQuery = supabase
+        .from('template_exceptions')
+        .select('id, template_id, exception_date')
+        .gte('exception_date', selectedDate)
+        .lt('exception_date', rangeEndDate)
       const [bookingsResult, templatesResult, exceptionsResult] = await Promise.all([
-        supabase
-          .from('bookings')
-          .select(BOOKING_SELECT)
-          .lt('start_time', dayEnd.toISOString())
-          .gt('end_time', dayStart.toISOString())
-          .order('start_time', { ascending: true }),
-        supabase
-          .from('booking_templates')
-          .select(
-            'id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
-          )
-          .eq('weekday', weekday)
-          .order('start_time', { ascending: true }),
-        supabase
-          .from('template_exceptions')
-          .select('id, template_id, exception_date')
-          .eq('exception_date', selectedDate),
+        bookingsQuery,
+        templatesQuery,
+        exceptionsQuery,
       ])
 
       setIsLoading(false)
@@ -1573,6 +1600,180 @@ function App() {
       lanes: Math.max(1, laneEnds.length),
     }
   }, [scheduleItems, selectedDate])
+
+  const scheduleDayGroups = useMemo(() => {
+    if (viewMode !== 'schedule') {
+      return [] as { date: string; items: ScheduleItem[] }[]
+    }
+
+    const today = getTodayString()
+    const exceptionKeySet = new Set(
+      templateExceptions.map((exception) => `${exception.template_id}:${exception.exception_date}`),
+    )
+    const groups: { date: string; items: ScheduleItem[] }[] = []
+
+    for (let dayOffset = 0; dayOffset < 7; dayOffset += 1) {
+      const dayDate = addDaysToDateString(selectedDate, dayOffset)
+      const dayStart = new Date(`${dayDate}T00:00:00`)
+      const dayEnd = new Date(dayStart)
+      dayEnd.setDate(dayEnd.getDate() + 1)
+      const weekday = getWeekdayIndex(dayDate)
+
+      const bookingItems: ScheduleItem[] = bookings
+        .filter((booking) => booking.usage_status !== 'cancelled')
+        .filter((booking) => {
+          const bookingStart = new Date(booking.start_time).getTime()
+          const bookingEnd = new Date(booking.end_time).getTime()
+          return bookingStart < dayEnd.getTime() && bookingEnd > dayStart.getTime()
+        })
+        .map((booking) => ({
+          ...booking,
+          isTemplate: false,
+        }))
+
+      const templateItems: ScheduleItem[] = templateBookings
+        .filter((template) => template.weekday === weekday)
+        .filter((template) => !exceptionKeySet.has(`${template.id}:${dayDate}`))
+        .filter(() => dayDate >= today)
+        .map((template) => {
+          const startTime = normalizeTime(template.start_time)
+          const endTime = normalizeTime(template.end_time)
+          return {
+            id: `template-${template.id}-${dayDate}`,
+            templateId: template.id,
+            boat_id: template.boat_id,
+            member_id: template.member_id,
+            start_time: new Date(`${dayDate}T${startTime}:00`).toISOString(),
+            end_time: new Date(`${dayDate}T${endTime}:00`).toISOString(),
+            boats: template.boats ?? null,
+            members: template.members ?? null,
+            boat_label: template.boat_label ?? null,
+            member_label: template.member_label ?? null,
+            weekday: template.weekday,
+            isTemplate: true,
+          }
+        })
+
+      const items = [...bookingItems, ...templateItems].sort((a, b) => {
+        const startDelta = new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+        if (startDelta !== 0) {
+          return startDelta
+        }
+        return new Date(a.end_time).getTime() - new Date(b.end_time).getTime()
+      })
+
+      groups.push({
+        date: dayDate,
+        items,
+      })
+    }
+
+    return groups
+  }, [bookings, selectedDate, templateBookings, templateExceptions, viewMode])
+
+  const scheduleDayGanttGroups = useMemo(() => {
+    if (viewMode !== 'schedule') {
+      return [] as {
+        date: string
+        items: (ScheduleItem & { startMinutes: number; endMinutes: number; lane: number })[]
+        lanes: number
+      }[]
+    }
+
+    return scheduleDayGroups.map((group) => {
+      const dayStart = new Date(`${group.date}T07:30:00`)
+      const dayStartMs = dayStart.getTime()
+      const items = group.items
+        .map((item) => {
+          const startMs = new Date(item.start_time).getTime()
+          const endMs = new Date(item.end_time).getTime()
+          const startMinutes = (startMs - dayStartMs) / 60000
+          const endMinutes = (endMs - dayStartMs) / 60000
+          return {
+            ...item,
+            startMinutes,
+            endMinutes,
+          }
+        })
+        .filter((item) => item.endMinutes > 0 && item.startMinutes < (END_HOUR - START_HOUR) * 60)
+        .sort((a, b) => a.startMinutes - b.startMinutes || a.endMinutes - b.endMinutes)
+
+      const laneEnds: number[] = []
+      const itemsWithLane = items.map((item) => {
+        let laneIndex = laneEnds.findIndex((end) => item.startMinutes >= end)
+        if (laneIndex === -1) {
+          laneIndex = laneEnds.length
+        }
+        laneEnds[laneIndex] = item.endMinutes
+        return { ...item, lane: laneIndex }
+      })
+
+      return {
+        date: group.date,
+        items: itemsWithLane,
+        lanes: Math.max(1, laneEnds.length),
+      }
+    })
+  }, [scheduleDayGroups, viewMode])
+
+  const canOpenScheduleItem = (item: ScheduleItem) => {
+    if (item.isTemplate) {
+      if (viewMode === 'templates') {
+        return isAdmin
+      }
+      return Boolean(item.boat_id && item.templateId && canEditTemplate(item))
+    }
+    return canEditBooking(item as Booking)
+  }
+
+  const openScheduleItem = (item: ScheduleItem) => {
+    if (!canOpenScheduleItem(item)) {
+      return
+    }
+    if (item.isTemplate) {
+      if (viewMode === 'templates') {
+        setEditingTemplate(item)
+        setEditingBooking(null)
+        setShowNewBooking(false)
+        setBookingBoatId(item.boat_id ?? '')
+        setBookingBoatIds([])
+        setBoatSearch('')
+        setBookingMemberId(item.member_id ?? '')
+        setStartTime(formatTimeInput(item.start_time))
+        setEndTime(formatTimeInput(item.end_time))
+        if (typeof item.weekday === 'number') {
+          setSelectedTemplateWeekday(item.weekday)
+        }
+        return
+      }
+      setEditingTemplate(item)
+      setEditingBooking(null)
+      setShowNewBooking(false)
+      return
+    }
+    const booking = item as Booking
+    setEditingBooking(booking)
+    setEditingTemplate(null)
+    setShowNewBooking(false)
+    setBookingBoatId(booking.boat_id ?? '')
+    setBookingBoatIds([])
+    setBoatSearch('')
+    setBookingMemberId(booking.member_id ?? '')
+    setStartTime(formatTimeInput(booking.start_time))
+    setEndTime(formatTimeInput(booking.end_time))
+  }
+
+  const getScheduleItemPillClassName = (item: ScheduleItem) => {
+    const isPastRenderedBooking = !item.isTemplate && isPastBooking(item as Booking)
+    const isPendingRenderedBooking = !item.isTemplate && isPendingBooking(item as Booking)
+    const isSettledRenderedBooking = !item.isTemplate && isSettledBooking(item as Booking)
+    return `booking-pill${item.isTemplate ? ' template' : ''}${
+      (isSettledRenderedBooking || (isPastRenderedBooking && !isPendingRenderedBooking)) &&
+      !isPendingRenderedBooking
+        ? ' booking-pill--past'
+        : ''
+    }${isPendingRenderedBooking ? ' booking-pill--pending' : ''}`
+  }
 
   const resetBookingForm = () => {
     setShowNewBooking(false)
@@ -3335,6 +3536,19 @@ function App() {
                     value={selectedDate}
                     onChange={(event) => setSelectedDate(event.target.value)}
                   />
+                  <button
+                    className="button ghost small"
+                    type="button"
+                    onClick={() =>
+                      setScheduleDisplayMode((current) =>
+                        current === 'gantt' ? 'list' : 'gantt',
+                      )
+                    }
+                  >
+                    {scheduleDisplayMode === 'gantt'
+                      ? 'Change to booking list'
+                      : 'Change to gantt chart'}
+                  </button>
                 </div>
               ) : viewMode === 'templates' ? (
                 <label className="field compact">
@@ -3923,6 +4137,167 @@ function App() {
                   </tbody>
                 </table>
               </div>
+            ) : viewMode === 'schedule' && scheduleDisplayMode === 'list' ? (
+              <div className="booking-list">
+                {isLoading ? (
+                  <p className="empty-state">Loading schedule...</p>
+                ) : (
+                  <>
+                    {scheduleDayGroups.every((group) => group.items.length === 0) ? (
+                      <p className="empty-state">No bookings for the next 7 days.</p>
+                    ) : (
+                      scheduleDayGroups.map((group) => (
+                        <div key={group.date} className="booking-list-day">
+                          <h3 className="booking-list-date">{formatDayLabel(group.date)}</h3>
+                          {group.items.length === 0 ? (
+                            <p className="empty-state">No bookings.</p>
+                          ) : (
+                            <div className="booking-list-items">
+                              {group.items.map((booking) => {
+                                const boatName =
+                                  getRelatedName(booking.boats) ??
+                                  (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
+                                const boatType = getRelatedType(booking.boats)
+                                const memberName =
+                                  getRelatedName(booking.members) ??
+                                  (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
+                                return (
+                                  <button
+                                    key={booking.id}
+                                    type="button"
+                                    className={`${getScheduleItemPillClassName(booking)} booking-list-item`}
+                                    onClick={() => openScheduleItem(booking)}
+                                    disabled={!canOpenScheduleItem(booking)}
+                                    aria-disabled={!canOpenScheduleItem(booking)}
+                                  >
+                                    <div>
+                                      <strong>
+                                        {boatType ? `${boatType} ${boatName}` : boatName}
+                                      </strong>
+                                      <span>{memberName}</span>
+                                    </div>
+                                    <span className="booking-time">
+                                      {formatTime(booking.start_time)} - {formatTime(booking.end_time)}
+                                    </span>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </>
+                )}
+              </div>
+            ) : viewMode === 'schedule' ? (
+              <div className="gantt-week">
+                {isLoading ? (
+                  <p className="empty-state">Loading schedule...</p>
+                ) : scheduleDayGanttGroups.every((group) => group.items.length === 0) ? (
+                  <p className="empty-state">No bookings for the next 7 days.</p>
+                ) : (
+                  scheduleDayGanttGroups.map((group) => (
+                    <div key={group.date} className="gantt-day">
+                      <h3 className="booking-list-date">{formatDayLabel(group.date)}</h3>
+                      {group.items.length === 0 ? (
+                        <p className="empty-state">No bookings.</p>
+                      ) : (
+                        <div className="gantt-scroll gantt-scroll--day">
+                          <div
+                            className="gantt-grid gantt-grid--day"
+                            style={{
+                              width: (END_HOUR - START_HOUR) * HOUR_WIDTH,
+                              height: group.lanes * LANE_HEIGHT + GANTT_BOTTOM_BUFFER,
+                            }}
+                          >
+                            <div className="gantt-verticals">
+                              {Array.from(
+                                { length: END_HOUR - START_HOUR + 1 },
+                                (_, index) => (
+                                  <div
+                                    key={`${group.date}-hour-${index}`}
+                                    className="gantt-line"
+                                    style={{
+                                      left: index * HOUR_WIDTH,
+                                    }}
+                                  />
+                                ),
+                              )}
+                              {Array.from(
+                                { length: END_HOUR - START_HOUR },
+                                (_, index) => (
+                                  <div
+                                    key={`${group.date}-half-${index}`}
+                                    className="gantt-line minor"
+                                    style={{
+                                      left: index * HOUR_WIDTH + HOUR_WIDTH / 2,
+                                    }}
+                                  />
+                                ),
+                              )}
+                            </div>
+                            <div className="gantt-hours">
+                              {Array.from(
+                                { length: END_HOUR - Math.ceil(START_HOUR) + 1 },
+                                (_, index) => Math.ceil(START_HOUR) + index,
+                              ).map((hour) => (
+                                <div
+                                  key={`${group.date}-${hour}`}
+                                  className="gantt-hour"
+                                  style={{
+                                    left: (hour - START_HOUR) * HOUR_WIDTH,
+                                  }}
+                                >
+                                  {formatHourLabel(hour)}
+                                </div>
+                              ))}
+                            </div>
+                            <div className="gantt-lanes">
+                              {group.items.map((booking) => {
+                                const fullBoatName =
+                                  getRelatedName(booking.boats) ??
+                                  (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
+                                const boatName = getGanttBoatDisplayName(fullBoatName)
+                                const boatType = getRelatedType(booking.boats)
+                                const memberName =
+                                  getRelatedName(booking.members) ??
+                                  (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
+                                const left = (booking.startMinutes / 60) * HOUR_WIDTH
+                                const width = Math.max(
+                                  36,
+                                  ((booking.endMinutes - booking.startMinutes) / 60) * HOUR_WIDTH,
+                                )
+                                return (
+                                  <button
+                                    key={booking.id}
+                                    type="button"
+                                    className={`${getScheduleItemPillClassName(booking)} gantt-pill`}
+                                    style={{
+                                      transform: `translate(${left}px, ${booking.lane * LANE_HEIGHT}px)`,
+                                      width,
+                                    }}
+                                    onClick={() => openScheduleItem(booking)}
+                                    disabled={!canOpenScheduleItem(booking)}
+                                    aria-disabled={!canOpenScheduleItem(booking)}
+                                  >
+                                    <div>
+                                      <strong>
+                                        {boatType ? `${boatType} ${boatName}` : boatName}
+                                      </strong>
+                                      <span>{memberName}</span>
+                                    </div>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
             ) : (
               <div className="gantt">
                 {isLoading ? (
@@ -3933,7 +4308,7 @@ function App() {
                       className="gantt-grid"
                       style={{
                         width: ganttLayout.totalHours * HOUR_WIDTH,
-                        height: ganttLayout.lanes * LANE_HEIGHT,
+                        height: ganttLayout.lanes * LANE_HEIGHT + GANTT_BOTTOM_BUFFER,
                       }}
                     >
                       <div className="gantt-verticals">
@@ -3974,9 +4349,10 @@ function App() {
                       </div>
                       <div className="gantt-lanes">
                         {ganttLayout.items.map((booking) => {
-                          const boatName =
+                          const fullBoatName =
                             getRelatedName(booking.boats) ??
                             (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
+                          const boatName = getGanttBoatDisplayName(fullBoatName)
                           const boatType = getRelatedType(booking.boats)
                           const memberName =
                             getRelatedName(booking.members) ??
@@ -3986,80 +4362,18 @@ function App() {
                             36,
                             ((booking.endMinutes - booking.startMinutes) / 60) * HOUR_WIDTH,
                           )
-                          const canOpenTemplate =
-                            viewMode === 'templates'
-                              ? isAdmin
-                              : Boolean(
-                                  booking.boat_id &&
-                                    booking.templateId &&
-                                    canEditTemplate(booking),
-                                )
-                          const canOpenBooking = booking.isTemplate
-                            ? canOpenTemplate
-                            : canEditBooking(booking as Booking)
-                          const isPastRenderedBooking =
-                            !booking.isTemplate && isPastBooking(booking as Booking)
-                          const isPendingRenderedBooking =
-                            !booking.isTemplate && isPendingBooking(booking as Booking)
-                          const isSettledRenderedBooking =
-                            !booking.isTemplate && isSettledBooking(booking as Booking)
-                          const handleBookingClick = () => {
-                            if (!canOpenBooking) {
-                              return
-                            }
-                            if (booking.isTemplate) {
-                              if (viewMode === 'templates') {
-                                setEditingTemplate(booking)
-                                setEditingBooking(null)
-                                setShowNewBooking(false)
-                                setBookingBoatId(booking.boat_id ?? '')
-                                setBookingBoatIds([])
-                                setBoatSearch('')
-                                setBookingMemberId(booking.member_id ?? '')
-                                setStartTime(formatTimeInput(booking.start_time))
-                                setEndTime(formatTimeInput(booking.end_time))
-                                if (typeof booking.weekday === 'number') {
-                                  setSelectedTemplateWeekday(booking.weekday)
-                                }
-                                return
-                              }
-                              setEditingTemplate(booking)
-                              setEditingBooking(null)
-                              setShowNewBooking(false)
-                              return
-                            }
-                            setEditingBooking(booking as Booking)
-                            setEditingTemplate(null)
-                            setShowNewBooking(false)
-                            setBookingBoatId(booking.boat_id ?? '')
-                            setBookingBoatIds([])
-                            setBoatSearch('')
-                            setBookingMemberId(booking.member_id ?? '')
-                            setStartTime(formatTimeInput(booking.start_time))
-                            setEndTime(formatTimeInput(booking.end_time))
-                          }
                           return (
                             <button
                               key={booking.id}
                               type="button"
-                              className={`booking-pill gantt-pill${
-                                booking.isTemplate ? ' template' : ''
-                              }${
-                                (isSettledRenderedBooking ||
-                                  (isPastRenderedBooking && !isPendingRenderedBooking)) &&
-                                !isPendingRenderedBooking
-                                  ? ' booking-pill--past'
-                                  : ''
-                              }${
-                                isPendingRenderedBooking ? ' booking-pill--pending' : ''
-                              }`}
+                              className={`${getScheduleItemPillClassName(booking)} gantt-pill`}
                               style={{
                                 transform: `translate(${left}px, ${booking.lane * LANE_HEIGHT}px)`,
                                 width,
                               }}
-                              onClick={handleBookingClick}
-                              disabled={!canOpenBooking}
-                              aria-disabled={!canOpenBooking}
+                              onClick={() => openScheduleItem(booking)}
+                              disabled={!canOpenScheduleItem(booking)}
+                              aria-disabled={!canOpenScheduleItem(booking)}
                             >
                               <div>
                                 <strong>{boatType ? `${boatType} ${boatName}` : boatName}</strong>

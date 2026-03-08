@@ -327,6 +327,39 @@ body {
   margin-top: -6px;
 }
 
+.gantt-week {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px 12px;
+}
+
+.gantt-day + .gantt-day {
+  margin-top: 18px;
+}
+
+.booking-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px 12px;
+}
+
+.booking-list-date {
+  margin: 0 0 12px;
+  color: var(--ink-2);
+}
+
+.booking-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.booking-list-day + .booking-list-day {
+  margin-top: 18px;
+}
+
 .boats-table {
   flex: 1;
   min-height: 0;
@@ -425,6 +458,15 @@ body {
   display: flex;
 }
 
+.gantt-scroll--day {
+  height: auto;
+  display: block;
+}
+
+.gantt-grid--day {
+  min-height: 0;
+}
+
 .gantt-grid {
   position: relative;
   border-radius: 0;
@@ -486,8 +528,9 @@ body {
 
 .gantt-pill {
   position: absolute;
-  height: 50px;
-  padding: 8px 10px;
+  height: 42px;
+  padding: 4px 8px;
+  box-sizing: border-box;
 }
 
 .full-bleed-right {
@@ -946,6 +989,12 @@ select:focus {
   margin-top: -15px;
 }
 
+.booking-list-item {
+  margin-top: 0;
+  min-height: 46px;
+  padding: 6px 10px;
+}
+
 .booking-pill:hover {
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
 }
@@ -1044,10 +1093,20 @@ select:focus {
   margin-top: -8px;
 }
 
+.booking-pill.booking-pill--past strong,
+.booking-pill.booking-pill--past span,
+.booking-pill.booking-pill--past:disabled span {
+  color: #ffffff;
+}
+
 .booking-time {
   font-weight: 600;
   color: var(--ink-2);
   white-space: nowrap;
+}
+
+.booking-pill.booking-pill--past .booking-time {
+  color: #ffffff;
 }
 
 .notice {
