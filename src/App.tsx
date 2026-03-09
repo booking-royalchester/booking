@@ -3052,18 +3052,77 @@ function App() {
 
     resetBookingForm()
 
+    const daysToLoad = 7
     const dayStart = new Date(`${selectedDate}T00:00:00`)
     const dayEnd = new Date(dayStart)
-    dayEnd.setDate(dayEnd.getDate() + 1)
+    dayEnd.setDate(dayEnd.getDate() + daysToLoad)
 
-    const { data } = await supabase
+    const bookingsQuery = supabase
       .from('bookings')
       .select(BOOKING_SELECT)
       .lt('start_time', dayEnd.toISOString())
       .gt('end_time', dayStart.toISOString())
       .order('start_time', { ascending: true })
+    const approvalRequestsQuery = currentMember
+      ? (() => {
+          let query = supabase
+            .from('captain_booking_requests')
+            .select(
+              'id, boat_id, member_id, requested_start_time, requested_end_time, requester_member:members!captain_booking_requests_member_id_fkey(name,email), boats(name,type)',
+            )
+            .eq('status', 'pending')
+            .lt('requested_start_time', dayEnd.toISOString())
+            .gt('requested_end_time', dayStart.toISOString())
+            .order('requested_start_time', { ascending: true })
+          if (!canApproveCaptainBookingRequests) {
+            query = query.eq('member_id', currentMember.id)
+          }
+          return query
+        })()
+      : Promise.resolve({ data: [], error: null })
+    const [bookingsResult, approvalRequestsResult] = await Promise.all([
+      bookingsQuery,
+      approvalRequestsQuery,
+    ])
 
-    setBookings(data ?? [])
+    if (bookingsResult.error) {
+      setError(bookingsResult.error.message)
+      return
+    }
+    if (approvalRequestsResult.error) {
+      setError(approvalRequestsResult.error.message)
+      return
+    }
+
+    setBookings(bookingsResult.data ?? [])
+    const pendingApprovals = (approvalRequestsResult.data ?? []) as Array<{
+      id: string
+      boat_id: string
+      member_id: string
+      requested_start_time: string
+      requested_end_time: string
+      boats?: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null
+      requester_member?:
+        | { name: string; email?: string | null }
+        | { name: string; email?: string | null }[]
+        | null
+    }>
+    setPendingApprovalScheduleItems(
+      pendingApprovals.map((row) => ({
+        id: `approval-${row.id}`,
+        captainRequestId: row.id,
+        boat_id: row.boat_id,
+        member_id: row.member_id,
+        start_time: row.requested_start_time,
+        end_time: row.requested_end_time,
+        isTemplate: false,
+        pendingApproval: true,
+        boats: Array.isArray(row.boats) ? row.boats[0] ?? null : row.boats ?? null,
+        members: Array.isArray(row.requester_member)
+          ? row.requester_member[0] ?? null
+          : row.requester_member ?? null,
+      })),
+    )
   }
 
   const handleDeleteBooking = async () => {
