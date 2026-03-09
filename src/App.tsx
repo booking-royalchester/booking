@@ -5295,98 +5295,99 @@ function App() {
                   scheduleDayGanttGroups.map((group) => (
                     <div key={group.date} className="gantt-day">
                       <h3 className="booking-list-date">{formatDayLabel(group.date)}</h3>
-                      <div className="gantt-scroll gantt-scroll--day">
-                        <div
-                          className="gantt-grid gantt-grid--day"
-                          style={{
-                            width: (END_HOUR - START_HOUR) * HOUR_WIDTH,
-                            height: group.lanes * LANE_HEIGHT + GANTT_BOTTOM_BUFFER,
-                          }}
-                        >
-                            <div className="gantt-verticals">
-                              {Array.from(
-                                { length: END_HOUR - START_HOUR + 1 },
-                                (_, index) => (
-                                  <div
-                                    key={`${group.date}-hour-${index}`}
-                                    className="gantt-line"
-                                    style={{
-                                      left: index * HOUR_WIDTH,
-                                    }}
-                                  />
-                                ),
-                              )}
-                              {Array.from(
-                                { length: END_HOUR - START_HOUR },
-                                (_, index) => (
-                                  <div
-                                    key={`${group.date}-half-${index}`}
-                                    className="gantt-line minor"
-                                    style={{
-                                      left: index * HOUR_WIDTH + HOUR_WIDTH / 2,
-                                    }}
-                                  />
-                                ),
-                              )}
-                            </div>
-                            <div className="gantt-hours">
-                              {Array.from(
-                                { length: END_HOUR - Math.ceil(START_HOUR) + 1 },
-                                (_, index) => Math.ceil(START_HOUR) + index,
-                              ).map((hour) => (
-                                <div
-                                  key={`${group.date}-${hour}`}
-                                  className="gantt-hour"
-                                  style={{
-                                    left: (hour - START_HOUR) * HOUR_WIDTH,
-                                  }}
-                                >
-                                  {formatHourLabel(hour)}
-                                </div>
-                              ))}
-                            </div>
-                            <div className="gantt-lanes">
-                              {group.items.map((booking) => {
-                                const fullBoatName =
-                                  getRelatedName(booking.boats) ??
-                                  (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
-                                const boatName = getGanttBoatDisplayName(fullBoatName)
-                                const boatType = getRelatedType(booking.boats)
-                                const memberName =
-                                  getRelatedName(booking.members) ??
-                                  (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
-                                const left = (booking.startMinutes / 60) * HOUR_WIDTH
-                                const width = Math.max(
-                                  36,
-                                  ((booking.endMinutes - booking.startMinutes) / 60) * HOUR_WIDTH,
-                                )
-                                return (
-                                  <button
-                                    key={booking.id}
-                                    type="button"
-                                    className={`${getScheduleItemPillClassName(booking)} gantt-pill`}
-                                    style={{
-                                      transform: `translate(${left}px, ${booking.lane * LANE_HEIGHT}px)`,
-                                      width,
-                                    }}
-                                    onClick={() => openScheduleItem(booking)}
-                                    disabled={!canOpenScheduleItem(booking)}
-                                    aria-disabled={!canOpenScheduleItem(booking)}
-                                  >
-                                    <div>
-                                      <strong>
-                                        {boatType ? `${boatType} ${boatName}` : boatName}
-                                      </strong>
-                                      <span>{memberName}</span>
-                                    </div>
-                                  </button>
-                                )
-                              })}
-                            </div>
-                        </div>
-                      </div>
                       {group.items.length === 0 ? (
                         <p className="empty-state">No bookings.</p>
+                      ) : (
+                        <div className="gantt-scroll gantt-scroll--day">
+                          <div
+                            className="gantt-grid gantt-grid--day"
+                            style={{
+                              width: (END_HOUR - START_HOUR) * HOUR_WIDTH,
+                              height: group.lanes * LANE_HEIGHT + GANTT_BOTTOM_BUFFER,
+                            }}
+                          >
+                              <div className="gantt-verticals">
+                                {Array.from(
+                                  { length: END_HOUR - START_HOUR + 1 },
+                                  (_, index) => (
+                                    <div
+                                      key={`${group.date}-hour-${index}`}
+                                      className="gantt-line"
+                                      style={{
+                                        left: index * HOUR_WIDTH,
+                                      }}
+                                    />
+                                  ),
+                                )}
+                                {Array.from(
+                                  { length: END_HOUR - START_HOUR },
+                                  (_, index) => (
+                                    <div
+                                      key={`${group.date}-half-${index}`}
+                                      className="gantt-line minor"
+                                      style={{
+                                        left: index * HOUR_WIDTH + HOUR_WIDTH / 2,
+                                      }}
+                                    />
+                                  ),
+                                )}
+                              </div>
+                              <div className="gantt-hours">
+                                {Array.from(
+                                  { length: END_HOUR - Math.ceil(START_HOUR) + 1 },
+                                  (_, index) => Math.ceil(START_HOUR) + index,
+                                ).map((hour) => (
+                                  <div
+                                    key={`${group.date}-${hour}`}
+                                    className="gantt-hour"
+                                    style={{
+                                      left: (hour - START_HOUR) * HOUR_WIDTH,
+                                    }}
+                                  >
+                                    {formatHourLabel(hour)}
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="gantt-lanes">
+                                {group.items.map((booking) => {
+                                  const fullBoatName =
+                                    getRelatedName(booking.boats) ??
+                                    (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
+                                  const boatName = getGanttBoatDisplayName(fullBoatName)
+                                  const boatType = getRelatedType(booking.boats)
+                                  const memberName =
+                                    getRelatedName(booking.members) ??
+                                    (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
+                                  const left = (booking.startMinutes / 60) * HOUR_WIDTH
+                                  const width = Math.max(
+                                    36,
+                                    ((booking.endMinutes - booking.startMinutes) / 60) * HOUR_WIDTH,
+                                  )
+                                  return (
+                                    <button
+                                      key={booking.id}
+                                      type="button"
+                                      className={`${getScheduleItemPillClassName(booking)} gantt-pill`}
+                                      style={{
+                                        transform: `translate(${left}px, ${booking.lane * LANE_HEIGHT}px)`,
+                                        width,
+                                      }}
+                                      onClick={() => openScheduleItem(booking)}
+                                      disabled={!canOpenScheduleItem(booking)}
+                                      aria-disabled={!canOpenScheduleItem(booking)}
+                                    >
+                                      <div>
+                                        <strong>
+                                          {boatType ? `${boatType} ${boatName}` : boatName}
+                                        </strong>
+                                        <span>{memberName}</span>
+                                      </div>
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                          </div>
+                        </div>
                       ) : null}
                     </div>
                   ))
