@@ -622,10 +622,6 @@ function App() {
   const selectedPendingBooking = selectedPendingBookingId
     ? pendingBookings.find((booking) => booking.id === selectedPendingBookingId) ?? null
     : null
-  const raceEventBaseBoatIds = useMemo(
-    () => Array.from(new Set((editingRaceEvent?.race_event_boats ?? []).map((link) => link.boat_id))),
-    [editingRaceEvent],
-  )
   const coordinatorPendingRaceEventRequest = useMemo(() => {
     if (!editingRaceEvent || !currentMember) {
       return null
@@ -3314,16 +3310,11 @@ function App() {
         return
       }
 
-      const previousSet = new Set(previousBoatIds)
-      const removedExistingBoat = previousBoatIds.some((boatId) => !boatIds.includes(boatId))
-      if (removedExistingBoat) {
-        setError('Coordinators can only add boats to a race event.')
-        return
-      }
-
-      const addedBoatIds = boatIds.filter((boatId) => !previousSet.has(boatId))
-      if (addedBoatIds.length === 0) {
-        setError('Select at least one additional boat to request an update.')
+      const sameSelection =
+        boatIds.length === previousBoatIds.length &&
+        boatIds.every((boatId) => previousBoatIds.includes(boatId))
+      if (sameSelection) {
+        setError('Change at least one boat before sending a validation request.')
         return
       }
 
@@ -3539,6 +3530,18 @@ function App() {
           raceEventId: request.race_event_id,
         }),
       }).catch(() => undefined)
+
+      await fetch('/api/push/notify-race-event-request-decision', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          requestId: request.id,
+          decision: 'approved',
+        }),
+      }).catch(() => undefined)
     }
 
     setStatus('Race event request approved.')
@@ -3567,6 +3570,21 @@ function App() {
     if (error) {
       setError(error.message)
       return
+    }
+
+    const accessToken = await getAccessToken()
+    if (accessToken) {
+      await fetch('/api/push/notify-race-event-request-decision', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          requestId: request.id,
+          decision: 'rejected',
+        }),
+      }).catch(() => undefined)
     }
 
     setStatus('Race event request rejected.')
@@ -5988,28 +6006,30 @@ function App() {
                   }
                 />
               </label>
-              <label className="field">
-                <span>Start date</span>
-                <input
-                  type="date"
-                  value={raceEventForm.start_date}
-                  readOnly={raceEventReadOnly || isCoordinatorRaceEventRequestMode}
-                  onChange={(event) =>
-                    setRaceEventForm((prev) => ({ ...prev, start_date: event.target.value }))
-                  }
-                />
-              </label>
-              <label className="field">
-                <span>End date</span>
-                <input
-                  type="date"
-                  value={raceEventForm.end_date}
-                  readOnly={raceEventReadOnly || isCoordinatorRaceEventRequestMode}
-                  onChange={(event) =>
-                    setRaceEventForm((prev) => ({ ...prev, end_date: event.target.value }))
-                  }
-                />
-              </label>
+              <div className="race-event-date-row">
+                <label className="field compact">
+                  <span>Start date</span>
+                  <input
+                    type="date"
+                    value={raceEventForm.start_date}
+                    readOnly={raceEventReadOnly || isCoordinatorRaceEventRequestMode}
+                    onChange={(event) =>
+                      setRaceEventForm((prev) => ({ ...prev, start_date: event.target.value }))
+                    }
+                  />
+                </label>
+                <label className="field compact">
+                  <span>End date</span>
+                  <input
+                    type="date"
+                    value={raceEventForm.end_date}
+                    readOnly={raceEventReadOnly || isCoordinatorRaceEventRequestMode}
+                    onChange={(event) =>
+                      setRaceEventForm((prev) => ({ ...prev, end_date: event.target.value }))
+                    }
+                  />
+                </label>
+              </div>
               <label className="field">
                 <span>Driver</span>
                 <input
@@ -6033,35 +6053,17 @@ function App() {
                   {raceEventForm.boatIds.length === 0 ? (
                     <span className="chip muted">No boats selected</span>
                   ) : (
-                    raceEventForm.boatIds.map((boatId) => {
-                      const boat = boats.find((item) => item.id === boatId)
-                      const label = boat
-                        ? boat.type
-                          ? `${boat.type} ${boat.name}`
-                          : boat.name
-                        : boatId
-                      return (
-                        <button
-                          key={boatId}
-                          type="button"
-                          className="selected-boat-row"
-                          disabled={
-                            raceEventReadOnly ||
-                            (isCoordinatorRaceEventRequestMode &&
-                              raceEventBaseBoatIds.includes(boatId))
+                    <span className="helper">
+                      {raceEventForm.boatIds
+                        .map((boatId) => {
+                          const boat = boats.find((item) => item.id === boatId)
+                          if (!boat) {
+                            return 'Boat'
                           }
-                          onClick={() =>
-                            setRaceEventForm((prev) => ({
-                              ...prev,
-                              boatIds: prev.boatIds.filter((id) => id !== boatId),
-                            }))
-                          }
-                        >
-                          <span>{label}</span>
-                          <span aria-hidden="true">x</span>
-                        </button>
-                      )
-                    })
+                          return boat.type ? `${boat.type} ${abbreviateBoatNameForRaceEvents(boat.name)}` : boat.name
+                        })
+                        .join(', ')}
+                    </span>
                   )}
                 </div>
                 <div className="boat-list">
@@ -6085,13 +6087,6 @@ function App() {
                           disabled={raceEventReadOnly}
                           onChange={(event) => {
                             const next = event.target.checked
-                            if (
-                              isCoordinatorRaceEventRequestMode &&
-                              !next &&
-                              raceEventBaseBoatIds.includes(boat.id)
-                            ) {
-                              return
-                            }
                             setRaceEventForm((prev) => ({
                               ...prev,
                               boatIds: next
@@ -6124,8 +6119,8 @@ function App() {
             ) : null}
             {isCoordinatorRaceEventRequestMode ? (
               <p className="helper">
-                Coordinators can only add boats. Title, dates, and driver stay unchanged until admin
-                validation.
+                Coordinators can add or remove boats. Title, dates, and driver stay unchanged until
+                admin validation.
               </p>
             ) : null}
             {isCoordinatorRaceEventRequestMode && coordinatorPendingRaceEventRequest ? (
