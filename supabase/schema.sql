@@ -39,6 +39,20 @@ create table if not exists race_event_boats (
   unique (race_event_id, boat_id)
 );
 
+create table if not exists race_event_change_requests (
+  id uuid primary key default gen_random_uuid(),
+  race_event_id uuid not null references race_events(id) on delete cascade,
+  requested_by_member_id uuid not null references members(id) on delete cascade,
+  previous_boat_ids uuid[] not null default '{}',
+  requested_boat_ids uuid[] not null default '{}',
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  review_reason text,
+  reviewed_by_member_id uuid references members(id) on delete set null,
+  reviewed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists coordinator_groups (
   id uuid primary key default gen_random_uuid(),
   coordinator_member_id uuid not null references members(id) on delete cascade,
@@ -212,6 +226,7 @@ alter table template_confirmations enable row level security;
 alter table boat_permissions enable row level security;
 alter table race_events enable row level security;
 alter table race_event_boats enable row level security;
+alter table race_event_change_requests enable row level security;
 alter table coordinator_groups enable row level security;
 alter table coordinator_group_members enable row level security;
 
@@ -249,6 +264,16 @@ create policy "Race events readable for authed" on race_events
 create policy "Race event boats readable for authed" on race_event_boats
   for select to authenticated
   using (true);
+
+create policy "Race event requests readable" on race_event_change_requests
+  for select to authenticated
+  using (
+    requested_by_member_id = (select id from members where email = auth.email())
+    or exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
 
 create policy "Race events insert for admins" on race_events
   for insert to authenticated
@@ -310,6 +335,28 @@ create policy "Race event boats update for admins" on race_event_boats
 create policy "Race event boats delete for admins" on race_event_boats
   for delete to authenticated
   using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  );
+
+create policy "Race event requests insert by requester" on race_event_change_requests
+  for insert to authenticated
+  with check (
+    requested_by_member_id = (select id from members where email = auth.email())
+    and status = 'pending'
+  );
+
+create policy "Race event requests update by admins" on race_event_change_requests
+  for update to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+  )
+  with check (
     exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())

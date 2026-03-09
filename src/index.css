@@ -457,6 +457,14 @@ body {
   gap: 10px;
 }
 
+.race-event-requests {
+  margin-bottom: 16px;
+}
+
+.race-event-requests h3 {
+  margin: 0 0 10px;
+}
+
 .race-event-card {
   width: 100%;
   border: 1px solid var(--stroke);

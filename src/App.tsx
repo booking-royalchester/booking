@@ -154,6 +154,22 @@ type RaceEvent = {
   race_event_boats?: RaceEventBoatLink[] | null
 }
 
+type RaceEventChangeRequest = {
+  id: string
+  race_event_id: string
+  requested_by_member_id: string
+  previous_boat_ids: string[]
+  requested_boat_ids: string[]
+  status: 'pending' | 'approved' | 'rejected'
+  review_reason?: string | null
+  reviewed_by_member_id?: string | null
+  reviewed_at?: string | null
+  created_at: string
+  updated_at?: string | null
+  members?: { name: string; email?: string | null } | { name: string; email?: string | null }[] | null
+  race_events?: Pick<RaceEvent, 'id' | 'title' | 'start_date' | 'end_date'> | null
+}
+
 type UserRole = 'admin' | 'coordinator' | 'guest'
 
 type BookingRiskAssessmentLink = {
@@ -449,6 +465,9 @@ function App() {
     { id: string; email: string; name: string; role?: UserRole | null; is_admin: boolean }[]
   >([])
   const [raceEvents, setRaceEvents] = useState<RaceEvent[]>([])
+  const [raceEventChangeRequests, setRaceEventChangeRequests] = useState<RaceEventChangeRequest[]>(
+    [],
+  )
   const [boats, setBoats] = useState<Boat[]>([])
   const [bookings, setBookings] = useState<Booking[]>([])
   const [pendingBookings, setPendingBookings] = useState<Booking[]>([])
@@ -586,6 +605,7 @@ function App() {
   const isCoordinator = userRole === 'coordinator'
   const isGuest = userRole === 'guest'
   const canManageAccess = isAdmin || isCoordinator
+  const canManageRaceEvents = isAdmin || isCoordinator
   const isSelectedDateInPast = selectedDate < getTodayString()
   const hasBlockingPendingConfirmations =
     !isAdmin && (pendingBookings.length > 0 || pendingTemplateConfirmations.length > 0)
@@ -599,6 +619,26 @@ function App() {
   const selectedPendingBooking = selectedPendingBookingId
     ? pendingBookings.find((booking) => booking.id === selectedPendingBookingId) ?? null
     : null
+  const raceEventBaseBoatIds = useMemo(
+    () => Array.from(new Set((editingRaceEvent?.race_event_boats ?? []).map((link) => link.boat_id))),
+    [editingRaceEvent],
+  )
+  const coordinatorPendingRaceEventRequest = useMemo(() => {
+    if (!editingRaceEvent || !currentMember) {
+      return null
+    }
+    return (
+      raceEventChangeRequests.find(
+        (request) =>
+          request.status === 'pending' &&
+          request.race_event_id === editingRaceEvent.id &&
+          request.requested_by_member_id === currentMember.id,
+      ) ?? null
+    )
+  }, [currentMember, editingRaceEvent, raceEventChangeRequests])
+  const isCoordinatorRaceEventRequestMode = Boolean(
+    !isAdmin && !raceEventReadOnly && editingRaceEvent,
+  )
 
   useEffect(() => {
     if (!__BUILD_ID__) {
@@ -726,6 +766,7 @@ function App() {
       setIsAdmin(false)
       setRoleFromAllowlist(null)
       setBookings([])
+      setRaceEventChangeRequests([])
       setTemplateBookings([])
       setTemplateExceptions([])
       setShowNewBooking(false)
@@ -1056,6 +1097,43 @@ function App() {
       })),
     )
   }, [session])
+
+  const fetchRaceEventChangeRequests = useCallback(async () => {
+    if (!session || !currentMember || isGuest) {
+      setRaceEventChangeRequests([])
+      return
+    }
+
+    let query = supabase
+      .from('race_event_change_requests')
+      .select(
+        'id, race_event_id, requested_by_member_id, previous_boat_ids, requested_boat_ids, status, review_reason, reviewed_by_member_id, reviewed_at, created_at, updated_at, members(name,email), race_events(id,title,start_date,end_date)',
+      )
+      .order('created_at', { ascending: false })
+
+    if (isAdmin) {
+      query = query.eq('status', 'pending')
+    } else {
+      query = query.eq('requested_by_member_id', currentMember.id)
+    }
+
+    const { data, error } = await query
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setRaceEventChangeRequests(
+      (data ?? []).map((request) => ({
+        ...request,
+        members: Array.isArray(request.members) ? request.members[0] ?? null : request.members ?? null,
+        race_events: Array.isArray(request.race_events)
+          ? request.race_events[0] ?? null
+          : request.race_events ?? null,
+      })),
+    )
+  }, [currentMember, isAdmin, isGuest, session])
 
   const resetRaceEventForm = () => {
     setShowRaceEventEditor(false)
@@ -1529,8 +1607,9 @@ function App() {
   useEffect(() => {
     if (viewMode === 'raceEvents' && session) {
       fetchRaceEvents()
+      fetchRaceEventChangeRequests()
     }
-  }, [fetchRaceEvents, session, viewMode])
+  }, [fetchRaceEventChangeRequests, fetchRaceEvents, session, viewMode])
 
   useEffect(() => {
     if (hasBlockingPendingConfirmations && viewMode !== 'pendingConfirmations') {
@@ -3195,8 +3274,8 @@ function App() {
   }
 
   const handleSaveRaceEvent = async () => {
-    if (!isAdmin) {
-      setError('Only admins can manage race events.')
+    if (!isAdmin && !(isCoordinator && editingRaceEvent)) {
+      setError('Only admins can create race events.')
       return
     }
 
@@ -3222,6 +3301,82 @@ function App() {
     const previousBoatIds = Array.from(
       new Set((editingRaceEvent?.race_event_boats ?? []).map((link) => link.boat_id)),
     )
+    const isCoordinatorRequest = Boolean(!isAdmin && isCoordinator && editingRaceEvent)
+
+    if (isCoordinatorRequest) {
+      if (!currentMember || !editingRaceEvent) {
+        setError('Unable to identify coordinator request.')
+        return
+      }
+
+      const previousSet = new Set(previousBoatIds)
+      const removedExistingBoat = previousBoatIds.some((boatId) => !boatIds.includes(boatId))
+      if (removedExistingBoat) {
+        setError('Coordinators can only add boats to a race event.')
+        return
+      }
+
+      const addedBoatIds = boatIds.filter((boatId) => !previousSet.has(boatId))
+      if (addedBoatIds.length === 0) {
+        setError('Select at least one additional boat to request an update.')
+        return
+      }
+
+      const { data: existingPendingRequest, error: pendingRequestError } = await supabase
+        .from('race_event_change_requests')
+        .select('id')
+        .eq('race_event_id', editingRaceEvent.id)
+        .eq('requested_by_member_id', currentMember.id)
+        .eq('status', 'pending')
+        .maybeSingle()
+
+      if (pendingRequestError) {
+        setError(pendingRequestError.message)
+        return
+      }
+
+      if (existingPendingRequest) {
+        setError('You already have a pending request for this event.')
+        return
+      }
+
+      const { data: createdRequest, error: createRequestError } = await supabase
+        .from('race_event_change_requests')
+        .insert({
+          race_event_id: editingRaceEvent.id,
+          requested_by_member_id: currentMember.id,
+          previous_boat_ids: previousBoatIds,
+          requested_boat_ids: boatIds,
+          status: 'pending',
+          updated_at: new Date().toISOString(),
+        })
+        .select('id')
+        .single()
+
+      if (createRequestError) {
+        setError(createRequestError.message)
+        return
+      }
+
+      const accessToken = await getAccessToken()
+      if (accessToken) {
+        await fetch('/api/push/notify-race-event-request-admins', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            requestId: createdRequest.id,
+          }),
+        }).catch(() => undefined)
+      }
+
+      setStatus('Update request sent to admins for validation.')
+      await fetchRaceEventChangeRequests()
+      resetRaceEventForm()
+      return
+    }
 
     let raceEventId = editingRaceEvent?.id ?? null
 
@@ -3276,16 +3431,18 @@ function App() {
       return
     }
 
-    const { error: insertLinksError } = await supabase.from('race_event_boats').insert(
-      boatIds.map((boatId) => ({
-        race_event_id: raceEventId,
-        boat_id: boatId,
-      })),
-    )
+    if (boatIds.length > 0) {
+      const { error: insertLinksError } = await supabase.from('race_event_boats').insert(
+        boatIds.map((boatId) => ({
+          race_event_id: raceEventId,
+          boat_id: boatId,
+        })),
+      )
 
-    if (insertLinksError) {
-      setError(insertLinksError.message)
-      return
+      if (insertLinksError) {
+        setError(insertLinksError.message)
+        return
+      }
     }
 
     const accessToken = await getAccessToken()
@@ -3310,6 +3467,105 @@ function App() {
     setStatus(editingRaceEvent ? 'Race event updated.' : 'Race event created.')
     await fetchRaceEvents()
     resetRaceEventForm()
+  }
+
+  const handleApproveRaceEventChangeRequest = async (request: RaceEventChangeRequest) => {
+    if (!isAdmin) {
+      setError('Only admins can validate race event requests.')
+      return
+    }
+
+    setError(null)
+    setStatus(null)
+
+    const { error: deleteLinksError } = await supabase
+      .from('race_event_boats')
+      .delete()
+      .eq('race_event_id', request.race_event_id)
+
+    if (deleteLinksError) {
+      setError(deleteLinksError.message)
+      return
+    }
+
+    if (request.requested_boat_ids.length > 0) {
+      const { error: insertLinksError } = await supabase.from('race_event_boats').insert(
+        request.requested_boat_ids.map((boatId) => ({
+          race_event_id: request.race_event_id,
+          boat_id: boatId,
+        })),
+      )
+
+      if (insertLinksError) {
+        setError(insertLinksError.message)
+        return
+      }
+    }
+
+    const { error: updateRequestError } = await supabase
+      .from('race_event_change_requests')
+      .update({
+        status: 'approved',
+        reviewed_by_member_id: currentMember?.id ?? null,
+        reviewed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', request.id)
+
+    if (updateRequestError) {
+      setError(updateRequestError.message)
+      return
+    }
+
+    const accessToken = await getAccessToken()
+    if (accessToken && request.race_events) {
+      await fetch('/api/push/notify-race-event-conflicts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          eventStartDate: request.race_events.start_date,
+          eventEndDate: request.race_events.end_date,
+          title: request.race_events.title,
+          boatIds: request.requested_boat_ids,
+          previousBoatIds: request.previous_boat_ids,
+          raceEventId: request.race_event_id,
+        }),
+      }).catch(() => undefined)
+    }
+
+    setStatus('Race event request approved.')
+    await Promise.all([fetchRaceEvents(), fetchRaceEventChangeRequests()])
+  }
+
+  const handleRejectRaceEventChangeRequest = async (request: RaceEventChangeRequest) => {
+    if (!isAdmin) {
+      setError('Only admins can validate race event requests.')
+      return
+    }
+
+    setError(null)
+    setStatus(null)
+
+    const { error } = await supabase
+      .from('race_event_change_requests')
+      .update({
+        status: 'rejected',
+        reviewed_by_member_id: currentMember?.id ?? null,
+        reviewed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', request.id)
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setStatus('Race event request rejected.')
+    await fetchRaceEventChangeRequests()
   }
 
   const handleSaveAccess = async () => {
@@ -4205,6 +4461,68 @@ function App() {
               </div>
             ) : viewMode === 'raceEvents' ? (
               <div className="access-table">
+                {isAdmin ? (
+                  <div className="race-event-requests">
+                    <h3>Pending race event requests</h3>
+                    {raceEventChangeRequests.length === 0 ? (
+                      <p className="empty-state">No pending requests.</p>
+                    ) : (
+                      <div className="pending-confirmations-panel">
+                        {raceEventChangeRequests.map((request) => {
+                          const requestedEvent = request.race_events
+                          const requestedBy = getRelatedName(request.members) ?? 'Coordinator'
+                          const previousSet = new Set(request.previous_boat_ids)
+                          const addedBoatIds = request.requested_boat_ids.filter(
+                            (boatId) => !previousSet.has(boatId),
+                          )
+                          const addedBoatLabels = addedBoatIds.map((boatId) => {
+                            const boat = boats.find((item) => item.id === boatId)
+                            if (!boat) {
+                              return 'Boat'
+                            }
+                            return boat.type ? `${boat.type} ${boat.name}` : boat.name
+                          })
+
+                          return (
+                            <div key={request.id} className="template-summary pending-confirmation-card">
+                              <div className="template-info">
+                                <strong>{requestedEvent?.title ?? 'Race event'}</strong>
+                                <span>
+                                  {requestedEvent
+                                    ? `${formatDateLabel(requestedEvent.start_date)} - ${formatDateLabel(requestedEvent.end_date)}`
+                                    : 'Date unavailable'}
+                                </span>
+                                <span>Requested by {requestedBy}</span>
+                                <span>
+                                  Add boats:{' '}
+                                  {addedBoatLabels.length > 0
+                                    ? addedBoatLabels.join(', ')
+                                    : 'No additional boats'}
+                                </span>
+                              </div>
+                              <div className="modal-actions">
+                                <button
+                                  className="button primary"
+                                  type="button"
+                                  onClick={() => handleApproveRaceEventChangeRequest(request)}
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  className="button ghost danger"
+                                  type="button"
+                                  onClick={() => handleRejectRaceEventChangeRequest(request)}
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
                 <div className="race-events-list">
                   {raceEvents.map((event) => {
                     const boatLabels = (event.race_event_boats ?? []).map((link) => {
@@ -4221,7 +4539,9 @@ function App() {
                         key={event.id}
                         type="button"
                         className="race-event-card"
-                        onClick={() => openRaceEventEditor(event, { readOnly: !isAdmin })}
+                        onClick={() =>
+                          openRaceEventEditor(event, { readOnly: !canManageRaceEvents })
+                        }
                       >
                         <strong>{event.title}</strong>
                         <span>
@@ -5642,6 +5962,8 @@ function App() {
               <h3>
                 {raceEventReadOnly
                   ? 'View race event'
+                  : isCoordinatorRaceEventRequestMode
+                    ? 'Request race event boat update'
                   : editingRaceEvent
                     ? 'Edit race event'
                     : 'Create race event'}
@@ -5655,7 +5977,7 @@ function App() {
                 <span>Title</span>
                 <input
                   value={raceEventForm.title}
-                  readOnly={raceEventReadOnly}
+                  readOnly={raceEventReadOnly || isCoordinatorRaceEventRequestMode}
                   onChange={(event) =>
                     setRaceEventForm((prev) => ({ ...prev, title: event.target.value }))
                   }
@@ -5666,7 +5988,7 @@ function App() {
                 <input
                   type="date"
                   value={raceEventForm.start_date}
-                  readOnly={raceEventReadOnly}
+                  readOnly={raceEventReadOnly || isCoordinatorRaceEventRequestMode}
                   onChange={(event) =>
                     setRaceEventForm((prev) => ({ ...prev, start_date: event.target.value }))
                   }
@@ -5677,7 +5999,7 @@ function App() {
                 <input
                   type="date"
                   value={raceEventForm.end_date}
-                  readOnly={raceEventReadOnly}
+                  readOnly={raceEventReadOnly || isCoordinatorRaceEventRequestMode}
                   onChange={(event) =>
                     setRaceEventForm((prev) => ({ ...prev, end_date: event.target.value }))
                   }
@@ -5687,7 +6009,7 @@ function App() {
                 <span>Driver</span>
                 <input
                   value={raceEventForm.driver}
-                  readOnly={raceEventReadOnly}
+                  readOnly={raceEventReadOnly || isCoordinatorRaceEventRequestMode}
                   onChange={(event) =>
                     setRaceEventForm((prev) => ({ ...prev, driver: event.target.value }))
                   }
@@ -5718,7 +6040,11 @@ function App() {
                           key={boatId}
                           type="button"
                           className="selected-boat-row"
-                          disabled={raceEventReadOnly}
+                          disabled={
+                            raceEventReadOnly ||
+                            (isCoordinatorRaceEventRequestMode &&
+                              raceEventBaseBoatIds.includes(boatId))
+                          }
                           onClick={() =>
                             setRaceEventForm((prev) => ({
                               ...prev,
@@ -5754,6 +6080,13 @@ function App() {
                           disabled={raceEventReadOnly}
                           onChange={(event) => {
                             const next = event.target.checked
+                            if (
+                              isCoordinatorRaceEventRequestMode &&
+                              !next &&
+                              raceEventBaseBoatIds.includes(boat.id)
+                            ) {
+                              return
+                            }
                             setRaceEventForm((prev) => ({
                               ...prev,
                               boatIds: next
@@ -5771,13 +6104,27 @@ function App() {
             </div>
             {!raceEventReadOnly ? (
               <div className="modal-actions">
-                <button className="button primary" type="button" onClick={handleSaveRaceEvent}>
-                  Save
+                <button
+                  className="button primary"
+                  type="button"
+                  onClick={handleSaveRaceEvent}
+                  disabled={isCoordinatorRaceEventRequestMode && Boolean(coordinatorPendingRaceEventRequest)}
+                >
+                  {isCoordinatorRaceEventRequestMode ? 'Request validation' : 'Save'}
                 </button>
                 <button className="button ghost" type="button" onClick={resetRaceEventForm}>
                   Cancel
                 </button>
               </div>
+            ) : null}
+            {isCoordinatorRaceEventRequestMode ? (
+              <p className="helper">
+                Coordinators can only add boats. Title, dates, and driver stay unchanged until admin
+                validation.
+              </p>
+            ) : null}
+            {isCoordinatorRaceEventRequestMode && coordinatorPendingRaceEventRequest ? (
+              <p className="helper">You already have a pending update request for this race event.</p>
             ) : null}
           </div>
         </div>
