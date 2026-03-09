@@ -5368,11 +5368,11 @@ function App() {
                                   <strong>
                                     {boatType ? `${boatType} ${boatName}` : boatName}
                                   </strong>
-                                  <span>
-                                    {booking.pendingApproval
-                                      ? `${memberName} - PENDING APPROVAL`
-                                      : memberName}
-                                  </span>
+                                    <span>
+                                      {booking.pendingApproval
+                                        ? `${memberName} - PENDING`
+                                        : memberName}
+                                    </span>
                                 </div>
                                 <span className="booking-time">
                                   {formatTime(booking.start_time)} - {formatTime(booking.end_time)}
@@ -5481,7 +5481,7 @@ function App() {
                                         </strong>
                                         <span>
                                           {booking.pendingApproval
-                                            ? `${memberName} - PENDING APPROVAL`
+                                            ? `${memberName} - PENDING`
                                             : memberName}
                                         </span>
                                       </div>
