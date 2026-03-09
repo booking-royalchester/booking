@@ -4543,18 +4543,15 @@ function App() {
                                     : 'Date unavailable'}
                                 </span>
                                 <span>Requested by {requestedBy}</span>
-                                <span>
-                                  Added boats:{' '}
-                                  {addedBoatLabels.length > 0
-                                    ? addedBoatLabels.join(', ')
-                                    : 'None'}
-                                </span>
-                                <span>
-                                  Removed boats:{' '}
-                                  {removedBoatLabels.length > 0
-                                    ? removedBoatLabels.join(', ')
-                                    : 'None'}
-                                </span>
+                                {addedBoatLabels.length > 0 ? (
+                                  <span>Added boats: {addedBoatLabels.join(', ')}</span>
+                                ) : null}
+                                {removedBoatLabels.length > 0 ? (
+                                  <span>Removed boats: {removedBoatLabels.join(', ')}</span>
+                                ) : null}
+                                {addedBoatLabels.length === 0 && removedBoatLabels.length === 0 ? (
+                                  <span>Boat list changed.</span>
+                                ) : null}
                               </div>
                               <div className="modal-actions">
                                 <button

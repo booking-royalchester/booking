@@ -110,19 +110,29 @@ export default async function handler(req, res) {
   }
 
   const previousSet = new Set(request.previous_boat_ids ?? [])
+  const requestedSet = new Set(request.requested_boat_ids ?? [])
   const addedCount = (request.requested_boat_ids ?? []).filter((boatId) => !previousSet.has(boatId)).length
+  const removedCount = (request.previous_boat_ids ?? []).filter((boatId) => !requestedSet.has(boatId)).length
   const requesterName = request.requested_by_member?.name || 'Coordinator'
   const title = request.race_events?.title || 'Race event'
   const dateRange =
     request.race_events?.start_date && request.race_events?.end_date
       ? `${formatLondonDate(request.race_events.start_date)} - ${formatLondonDate(request.race_events.end_date)}`
       : ''
+  const changeParts = []
+  if (addedCount > 0) {
+    changeParts.push(`+${addedCount} boat(s)`)
+  }
+  if (removedCount > 0) {
+    changeParts.push(`-${removedCount} boat(s)`)
+  }
+  const changeSummary = changeParts.length > 0 ? changeParts.join(', ') : 'boat list changed'
 
   await Promise.all(
     (admins ?? []).map(async (admin) => {
       await sendToMember(admin.member_id, {
         title: 'Race event update request',
-        body: `${requesterName} requested to add ${addedCount} boat(s) on "${title}" ${dateRange}`.trim(),
+        body: `${requesterName} requested updates for "${title}" (${changeSummary}) ${dateRange}`.trim(),
         url: '/',
       })
     }),
