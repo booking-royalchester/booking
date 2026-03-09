@@ -179,17 +179,26 @@ body {
 .menu-alert-dot,
 .menu-item-alert-dot {
   display: inline-block;
-  width: 11px;
-  height: 11px;
+  width: 14px;
+  height: 14px;
   border-radius: 999px;
-  background: #dc2626;
+  background: #ef4444;
   flex: 0 0 auto;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3px #b91c1c;
 }
 
 .menu-alert-dot {
   position: absolute;
-  top: 2px;
-  right: 2px;
+  top: -4px;
+  right: -4px;
+}
+
+.menu-button .menu-alert-dot {
+  width: 14px;
+  height: 14px;
+  background: #ef4444;
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3px #b91c1c;
 }
 
 .app::before,
@@ -1108,6 +1117,11 @@ select:focus {
 .booking-pill--pending {
   background: rgba(191, 219, 254, 0.45);
   border-color: rgba(37, 99, 235, 0.55);
+}
+
+.booking-pill--approval {
+  background: #ffffff;
+  border-color: rgba(148, 163, 184, 0.75);
 }
 
 .templates-mode .booking-pill {

@@ -234,6 +234,7 @@ type ScheduleItem = {
   start_time: string
   end_time: string
   isTemplate: boolean
+  pendingApproval?: boolean
   boat_label?: string | null
   member_label?: string | null
   templateId?: string
@@ -511,6 +512,9 @@ function App() {
   const [pendingTemplateConfirmations, setPendingTemplateConfirmations] = useState<
     TemplateConfirmation[]
   >([])
+  const [pendingApprovalScheduleItems, setPendingApprovalScheduleItems] = useState<ScheduleItem[]>(
+    [],
+  )
   const [captainBookingRequests, setCaptainBookingRequests] = useState<CaptainBookingRequest[]>([])
   const [templateBookings, setTemplateBookings] = useState<TemplateBooking[]>([])
   const [templateExceptions, setTemplateExceptions] = useState<TemplateException[]>([])
@@ -811,6 +815,7 @@ function App() {
       setIsAdmin(false)
       setRoleFromAllowlist(null)
       setBookings([])
+      setPendingApprovalScheduleItems([])
       setCaptainBookingRequests([])
       setRaceEventChangeRequests([])
       setTemplateBookings([])
@@ -1792,10 +1797,23 @@ function App() {
         .select('id, template_id, exception_date')
         .gte('exception_date', selectedDate)
         .lt('exception_date', rangeEndDate)
-      const [bookingsResult, templatesResult, exceptionsResult] = await Promise.all([
+      const approvalRequestsQuery = currentMember
+        ? supabase
+            .from('captain_booking_requests')
+            .select(
+              'id, boat_id, member_id, requested_start_time, requested_end_time, requester_member:members!captain_booking_requests_member_id_fkey(name,email), boats(name,type)',
+            )
+            .eq('member_id', currentMember.id)
+            .eq('status', 'pending')
+            .lt('requested_start_time', dayEnd.toISOString())
+            .gt('requested_end_time', dayStart.toISOString())
+            .order('requested_start_time', { ascending: true })
+        : Promise.resolve({ data: [], error: null })
+      const [bookingsResult, templatesResult, exceptionsResult, approvalRequestsResult] = await Promise.all([
         bookingsQuery,
         templatesQuery,
         exceptionsQuery,
+        approvalRequestsQuery,
       ])
 
       setIsLoading(false)
@@ -1815,13 +1833,45 @@ function App() {
         return
       }
 
+      if (approvalRequestsResult.error) {
+        setError(approvalRequestsResult.error.message)
+        return
+      }
+
       setBookings(bookingsResult.data ?? [])
       setTemplateBookings(templatesResult.data ?? [])
       setTemplateExceptions(exceptionsResult.data ?? [])
+      const pendingApprovals = (approvalRequestsResult.data ?? []) as Array<{
+        id: string
+        boat_id: string
+        member_id: string
+        requested_start_time: string
+        requested_end_time: string
+        boats?: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null
+        requester_member?:
+          | { name: string; email?: string | null }
+          | { name: string; email?: string | null }[]
+          | null
+      }>
+      setPendingApprovalScheduleItems(
+        pendingApprovals.map((row) => ({
+          id: `approval-${row.id}`,
+          boat_id: row.boat_id,
+          member_id: row.member_id,
+          start_time: row.requested_start_time,
+          end_time: row.requested_end_time,
+          isTemplate: false,
+          pendingApproval: true,
+          boats: Array.isArray(row.boats) ? row.boats[0] ?? null : row.boats ?? null,
+          members: Array.isArray(row.requester_member)
+            ? row.requester_member[0] ?? null
+            : row.requester_member ?? null,
+        })),
+      )
     }
 
     loadBookings()
-  }, [selectedDate, session, viewMode])
+  }, [currentMember, selectedDate, session, viewMode])
 
   useEffect(() => {
     if (viewMode !== 'templates' || !session) {
@@ -1892,13 +1942,15 @@ function App() {
       return fromTemplates
     }
 
-    const fromBookings: ScheduleItem[] = bookings.map((booking) => ({
-      ...booking,
-      isTemplate: false,
-    })).filter((booking) => booking.usage_status !== 'cancelled')
+    const fromBookings: ScheduleItem[] = bookings
+      .map((booking) => ({
+        ...booking,
+        isTemplate: false,
+      }))
+      .filter((booking) => booking.usage_status !== 'cancelled')
 
-    return [...fromTemplates, ...fromBookings]
-  }, [bookings, templateBookings, selectedDate, templateExceptions, viewMode])
+    return [...fromTemplates, ...fromBookings, ...pendingApprovalScheduleItems]
+  }, [bookings, pendingApprovalScheduleItems, templateBookings, selectedDate, templateExceptions, viewMode])
 
   const ganttLayout = useMemo(() => {
     const timelineStart = START_HOUR
@@ -2059,6 +2111,9 @@ function App() {
   }, [scheduleDayGroups, viewMode])
 
   const canOpenScheduleItem = (item: ScheduleItem) => {
+    if (item.pendingApproval) {
+      return false
+    }
     if (isGuest) {
       return true
     }
@@ -2109,6 +2164,9 @@ function App() {
   }
 
   const getScheduleItemPillClassName = (item: ScheduleItem) => {
+    if (item.pendingApproval) {
+      return 'booking-pill booking-pill--approval'
+    }
     const isPastRenderedBooking = !item.isTemplate && isPastBooking(item as Booking)
     const isPendingRenderedBooking = !item.isTemplate && isPendingBooking(item as Booking)
     const isSettledRenderedBooking = !item.isTemplate && isSettledBooking(item as Booking)
@@ -5273,7 +5331,11 @@ function App() {
                                   <strong>
                                     {boatType ? `${boatType} ${boatName}` : boatName}
                                   </strong>
-                                  <span>{memberName}</span>
+                                  <span>
+                                    {booking.pendingApproval
+                                      ? `${memberName} - PENDING APPROVAL`
+                                      : memberName}
+                                  </span>
                                 </div>
                                 <span className="booking-time">
                                   {formatTime(booking.start_time)} - {formatTime(booking.end_time)}
@@ -5380,7 +5442,11 @@ function App() {
                                         <strong>
                                           {boatType ? `${boatType} ${boatName}` : boatName}
                                         </strong>
-                                        <span>{memberName}</span>
+                                        <span>
+                                          {booking.pendingApproval
+                                            ? `${memberName} - PENDING APPROVAL`
+                                            : memberName}
+                                        </span>
                                       </div>
                                     </button>
                                   )
