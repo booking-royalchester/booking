@@ -2034,6 +2034,18 @@ function App() {
           isTemplate: false,
         }))
 
+      const pendingApprovalItems: ScheduleItem[] = pendingApprovalScheduleItems
+        .filter((item) => {
+          const itemStart = new Date(item.start_time).getTime()
+          const itemEnd = new Date(item.end_time).getTime()
+          return itemStart < dayEnd.getTime() && itemEnd > dayStart.getTime()
+        })
+        .map((item) => ({
+          ...item,
+          isTemplate: false,
+          pendingApproval: true,
+        }))
+
       const templateItems: ScheduleItem[] = templateBookings
         .filter((template) => template.weekday === weekday)
         .filter((template) => !exceptionKeySet.has(`${template.id}:${dayDate}`))
@@ -2057,7 +2069,7 @@ function App() {
           }
         })
 
-      const items = [...bookingItems, ...templateItems].sort((a, b) => {
+      const items = [...bookingItems, ...pendingApprovalItems, ...templateItems].sort((a, b) => {
         const startDelta = new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
         if (startDelta !== 0) {
           return startDelta
@@ -2072,7 +2084,14 @@ function App() {
     }
 
     return groups
-  }, [bookings, selectedDate, templateBookings, templateExceptions, viewMode])
+  }, [
+    bookings,
+    pendingApprovalScheduleItems,
+    selectedDate,
+    templateBookings,
+    templateExceptions,
+    viewMode,
+  ])
 
   const scheduleDayGanttGroups = useMemo(() => {
     if (viewMode !== 'schedule') {
