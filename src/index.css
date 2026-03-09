@@ -1122,6 +1122,19 @@ select:focus {
 .booking-pill--approval {
   background: #ffffff;
   border-color: rgba(148, 163, 184, 0.75);
+  position: relative;
+}
+
+.booking-pill--approval::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #ef4444;
+  box-shadow: 0 0 0 2px #ffffff;
 }
 
 .templates-mode .booking-pill {

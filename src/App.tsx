@@ -235,6 +235,7 @@ type ScheduleItem = {
   end_time: string
   isTemplate: boolean
   pendingApproval?: boolean
+  captainRequestId?: string
   boat_label?: string | null
   member_label?: string | null
   templateId?: string
@@ -516,6 +517,8 @@ function App() {
     [],
   )
   const [captainBookingRequests, setCaptainBookingRequests] = useState<CaptainBookingRequest[]>([])
+  const [selectedCaptainApprovalRequest, setSelectedCaptainApprovalRequest] =
+    useState<CaptainBookingRequest | null>(null)
   const [templateBookings, setTemplateBookings] = useState<TemplateBooking[]>([])
   const [templateExceptions, setTemplateExceptions] = useState<TemplateException[]>([])
   const [boatPermissions, setBoatPermissions] = useState<Record<string, Record<string, string | null>>>({})
@@ -1798,16 +1801,21 @@ function App() {
         .gte('exception_date', selectedDate)
         .lt('exception_date', rangeEndDate)
       const approvalRequestsQuery = currentMember
-        ? supabase
-            .from('captain_booking_requests')
-            .select(
-              'id, boat_id, member_id, requested_start_time, requested_end_time, requester_member:members!captain_booking_requests_member_id_fkey(name,email), boats(name,type)',
-            )
-            .eq('member_id', currentMember.id)
-            .eq('status', 'pending')
-            .lt('requested_start_time', dayEnd.toISOString())
-            .gt('requested_end_time', dayStart.toISOString())
-            .order('requested_start_time', { ascending: true })
+        ? (() => {
+            let query = supabase
+              .from('captain_booking_requests')
+              .select(
+                'id, boat_id, member_id, requested_start_time, requested_end_time, requester_member:members!captain_booking_requests_member_id_fkey(name,email), boats(name,type)',
+              )
+              .eq('status', 'pending')
+              .lt('requested_start_time', dayEnd.toISOString())
+              .gt('requested_end_time', dayStart.toISOString())
+              .order('requested_start_time', { ascending: true })
+            if (!canApproveCaptainBookingRequests) {
+              query = query.eq('member_id', currentMember.id)
+            }
+            return query
+          })()
         : Promise.resolve({ data: [], error: null })
       const [bookingsResult, templatesResult, exceptionsResult, approvalRequestsResult] = await Promise.all([
         bookingsQuery,
@@ -1856,6 +1864,7 @@ function App() {
       setPendingApprovalScheduleItems(
         pendingApprovals.map((row) => ({
           id: `approval-${row.id}`,
+          captainRequestId: row.id,
           boat_id: row.boat_id,
           member_id: row.member_id,
           start_time: row.requested_start_time,
@@ -1871,7 +1880,7 @@ function App() {
     }
 
     loadBookings()
-  }, [currentMember, selectedDate, session, viewMode])
+  }, [canApproveCaptainBookingRequests, currentMember, selectedDate, session, viewMode])
 
   useEffect(() => {
     if (viewMode !== 'templates' || !session) {
@@ -2112,7 +2121,7 @@ function App() {
 
   const canOpenScheduleItem = (item: ScheduleItem) => {
     if (item.pendingApproval) {
-      return false
+      return canApproveCaptainBookingRequests
     }
     if (isGuest) {
       return true
@@ -2128,6 +2137,13 @@ function App() {
 
   const openScheduleItem = (item: ScheduleItem) => {
     if (!canOpenScheduleItem(item)) {
+      return
+    }
+    if (item.pendingApproval && item.captainRequestId) {
+      const request = captainBookingRequests.find((row) => row.id === item.captainRequestId)
+      if (request) {
+        setSelectedCaptainApprovalRequest(request)
+      }
       return
     }
     if (item.isTemplate) {
@@ -3887,6 +3903,7 @@ function App() {
     }
 
     setStatus('Booking request approved.')
+    setSelectedCaptainApprovalRequest(null)
     await Promise.all([fetchCaptainBookingRequests(), refreshScheduleDay(selectedDate)])
   }
 
@@ -3929,6 +3946,7 @@ function App() {
     }
 
     setStatus('Booking request rejected.')
+    setSelectedCaptainApprovalRequest(null)
     await fetchCaptainBookingRequests()
   }
 
@@ -6416,6 +6434,75 @@ function App() {
                 ) : null}
               </div>
             )}
+          </div>
+        </div>
+      ) : null}
+
+      {session && selectedCaptainApprovalRequest ? (
+        <div className="modal-backdrop" onClick={() => setSelectedCaptainApprovalRequest(null)}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Captain booking approval</h3>
+              <button
+                className="button ghost"
+                type="button"
+                onClick={() => setSelectedCaptainApprovalRequest(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="form-grid">
+              <div className="field">
+                <span>Boat</span>
+                <input
+                  readOnly
+                  value={
+                    (() => {
+                      const boatName = getRelatedName(selectedCaptainApprovalRequest.boats) ?? 'Boat'
+                      const boatType = getRelatedType(selectedCaptainApprovalRequest.boats)
+                      return boatType ? `${boatType} ${boatName}` : boatName
+                    })()
+                  }
+                />
+              </div>
+              <div className="field">
+                <span>Coordinator</span>
+                <input
+                  readOnly
+                  value={getRelatedName(selectedCaptainApprovalRequest.requester_member) ?? 'Member'}
+                />
+              </div>
+              <div className="field">
+                <span>Date</span>
+                <input
+                  readOnly
+                  value={formatDayLabel(selectedCaptainApprovalRequest.requested_start_time.slice(0, 10))}
+                />
+              </div>
+              <div className="field">
+                <span>Time</span>
+                <input
+                  readOnly
+                  value={`${formatTime(selectedCaptainApprovalRequest.requested_start_time)} - ${formatTime(selectedCaptainApprovalRequest.requested_end_time)}`}
+                />
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button
+                className="button primary"
+                type="button"
+                onClick={() => handleApproveCaptainBookingRequest(selectedCaptainApprovalRequest)}
+              >
+                Yes
+              </button>
+              <button
+                className="button ghost danger"
+                type="button"
+                onClick={() => handleRejectCaptainBookingRequest(selectedCaptainApprovalRequest)}
+              >
+                No
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
