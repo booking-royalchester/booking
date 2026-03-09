@@ -257,6 +257,63 @@ create policy "Boats readable for authed" on boats
   for select to authenticated
   using (true);
 
+create policy "Boats insert for captains or admins" on boats
+  for insert to authenticated
+  with check (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
+create policy "Boats update for captains or admins" on boats
+  for update to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  )
+  with check (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
+create policy "Boats delete for captains or admins" on boats
+  for delete to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
 create policy "Race events readable for authed" on race_events
   for select to authenticated
   using (true);
@@ -452,6 +509,48 @@ create policy "Templates readable for authed" on booking_templates
   for select to authenticated
   using (true);
 
+create policy "Templates insert for captains or admins" on booking_templates
+  for insert to authenticated
+  with check (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
+create policy "Templates update for captains or admins" on booking_templates
+  for update to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  )
+  with check (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
 create policy "Risk assessments readable for authed" on risk_assessments
   for select to authenticated
   using (
@@ -565,21 +664,18 @@ create policy "Booking risk assessments update for authed" on booking_risk_asses
     )
   );
 
-create policy "Templates delete for authed" on booking_templates
+create policy "Templates delete for captains or admins" on booking_templates
   for delete to authenticated
   using (
     exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
       select 1
       from allowed_member am
       where lower(am.email) = lower(auth.email())
-      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
-    )
-    and (
-      member_id = (select id from members where email = auth.email())
-      or exists (
-        select 1 from admins
-        where member_id = (select id from members where email = auth.email())
-      )
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
     )
   );
 
@@ -587,47 +683,33 @@ create policy "Template exceptions readable for authed" on template_exceptions
   for select to authenticated
   using (true);
 
-create policy "Template exceptions insert for authed" on template_exceptions
+create policy "Template exceptions insert for captains or admins" on template_exceptions
   for insert to authenticated
   with check (
     exists (
-      select 1 from booking_templates bt
-      where bt.id = template_id
-      and exists (
-        select 1
-        from allowed_member am
-        where lower(am.email) = lower(auth.email())
-        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
-      )
-      and (
-        bt.member_id = (select id from members where email = auth.email())
-        or exists (
-          select 1 from admins
-          where member_id = (select id from members where email = auth.email())
-        )
-      )
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
     )
   );
 
-create policy "Template exceptions delete for authed" on template_exceptions
+create policy "Template exceptions delete for captains or admins" on template_exceptions
   for delete to authenticated
   using (
     exists (
-      select 1 from booking_templates bt
-      where bt.id = template_id
-      and exists (
-        select 1
-        from allowed_member am
-        where lower(am.email) = lower(auth.email())
-        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
-      )
-      and (
-        bt.member_id = (select id from members where email = auth.email())
-        or exists (
-          select 1 from admins
-          where member_id = (select id from members where email = auth.email())
-        )
-      )
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
     )
   );
 
@@ -672,21 +754,33 @@ create policy "Boat permissions readable for authed" on boat_permissions
   for select to authenticated
   using (true);
 
-create policy "Boat permissions insert for authed" on boat_permissions
+create policy "Boat permissions insert for captains or admins" on boat_permissions
   for insert to authenticated
   with check (
     exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
     )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
   );
 
-create policy "Boat permissions delete for authed" on boat_permissions
+create policy "Boat permissions delete for captains or admins" on boat_permissions
   for delete to authenticated
   using (
     exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
     )
   );
 

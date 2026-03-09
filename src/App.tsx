@@ -610,10 +610,12 @@ function App() {
   const [isLoading, setIsLoading] = useState(false)
   const isCoordinator = userRole === 'coordinator'
   const isCaptain = userRole === 'captain'
-  const isGuest = userRole === 'guest' || isCaptain
+  const isGuest = userRole === 'guest'
+  const isBookingReadOnlyRole = isGuest || isCaptain
   const canManageAccess = isAdmin || isCoordinator || isCaptain
   const canManageRaceEvents = isAdmin || isCoordinator
   const canApproveRaceEventRequests = isAdmin || isCaptain
+  const canManageFleet = isAdmin || isCaptain
   const pendingRaceEventRequestCount = canApproveRaceEventRequests ? raceEventChangeRequests.length : 0
   const isSelectedDateInPast = selectedDate < getTodayString()
   const hasBlockingPendingConfirmations =
@@ -1602,14 +1604,14 @@ function App() {
 
   useEffect(() => {
     if (
-      (viewMode === 'templates' && !isAdmin) ||
+      (viewMode === 'templates' && !canManageFleet) ||
       (viewMode === 'access' && !canManageAccess) ||
       (viewMode === 'groups' && !canManageAccess) ||
       (viewMode === 'riskAssessments' && !isAdmin)
     ) {
       setViewMode('schedule')
     }
-  }, [canManageAccess, isAdmin, viewMode])
+  }, [canManageAccess, canManageFleet, isAdmin, viewMode])
 
   useEffect(() => {
     if (viewMode === 'riskAssessments' && session) {
@@ -1984,7 +1986,7 @@ function App() {
     }
     if (item.isTemplate) {
       if (viewMode === 'templates') {
-        return isAdmin
+        return canManageFleet
       }
       return Boolean(item.boat_id && item.templateId && canEditTemplate(item))
     }
@@ -2057,7 +2059,7 @@ function App() {
   }
 
   const canEditBooking = (booking: { member_id: string | null }) => {
-    if (isGuest) {
+    if (isBookingReadOnlyRole) {
       return false
     }
     if (isAdmin) {
@@ -2081,11 +2083,11 @@ function App() {
   const isEditingBookingLocked = editingBooking ? !canModifyBooking(editingBooking) : false
 
   const canEditTemplate = (item: { member_id: string | null }) => {
+    if (canManageFleet) {
+      return true
+    }
     if (isGuest) {
       return false
-    }
-    if (isAdmin) {
-      return true
     }
     return Boolean(currentMember && item.member_id === currentMember.id)
   }
@@ -2390,6 +2392,10 @@ function App() {
     if (!editingBoat) {
       return
     }
+    if (!canManageFleet) {
+      setError('Only captains or admins can edit boats.')
+      return
+    }
 
     setError(null)
     setStatus(null)
@@ -2441,6 +2447,10 @@ function App() {
     if (!editingBoat || !editingBoat.id) {
       return
     }
+    if (!canManageFleet) {
+      setError('Only captains or admins can edit boats.')
+      return
+    }
 
     const confirmDelete = window.confirm('Are you sure you want to delete this boat?')
     if (!confirmDelete) {
@@ -2476,8 +2486,8 @@ function App() {
     setError(null)
     setStatus(null)
 
-    if (!isAdmin) {
-      setError('Only admins can edit templates.')
+    if (!canManageFleet) {
+      setError('Only captains or admins can edit templates.')
       return
     }
 
@@ -2586,8 +2596,8 @@ function App() {
     setError(null)
     setStatus(null)
 
-    if (!isAdmin) {
-      setError('Only admins can edit templates.')
+    if (!canManageFleet) {
+      setError('Only captains or admins can edit templates.')
       return
     }
 
@@ -2610,8 +2620,8 @@ function App() {
     setError(null)
     setStatus(null)
 
-    if (isGuest) {
-      setError('Guests have read-only access.')
+    if (isBookingReadOnlyRole) {
+      setError('Guests and captains have read-only booking access.')
       return
     }
 
@@ -3980,7 +3990,7 @@ function App() {
                     Pending confirmations ({pendingBookings.length + pendingTemplateConfirmations.length})
                   </button>
                 ) : null}
-                {isAdmin ? (
+                {canManageFleet ? (
                   <>
                     <button
                       className="menu-item"
@@ -4022,21 +4032,23 @@ function App() {
                     >
                       Manage Accesses
                     </button>
-                    <button
-                      className="menu-item"
-                      type="button"
-                      onClick={() => {
-                        setIsMenuOpen(false)
-                        setShowNewBooking(false)
-                        setEditingBooking(null)
-                        setEditingTemplate(null)
-                        setViewMode('riskAssessments')
-                      }}
-                    >
-                      Risk Assessments
-                    </button>
+                    {isAdmin ? (
+                      <button
+                        className="menu-item"
+                        type="button"
+                        onClick={() => {
+                          setIsMenuOpen(false)
+                          setShowNewBooking(false)
+                          setEditingBooking(null)
+                          setEditingTemplate(null)
+                          setViewMode('riskAssessments')
+                        }}
+                      >
+                        Risk Assessments
+                      </button>
+                    ) : null}
                   </>
-                ) : isCoordinator || isCaptain ? (
+                ) : isCoordinator ? (
                   <>
                     <button
                       className="menu-item"
@@ -4889,7 +4901,7 @@ function App() {
                       <tr
                         key={boat.id}
                         onClick={() => {
-                          if (isAdmin) {
+                          if (canManageFleet) {
                             openBoatEditor(boat)
                           }
                         }}
@@ -5353,7 +5365,8 @@ function App() {
       )}
 
       {session &&
-      (isAdmin || (currentMember && !isGuest)) &&
+      ((viewMode === 'templates' && canManageFleet) ||
+        (viewMode === 'schedule' && (isAdmin || (currentMember && !isBookingReadOnlyRole)))) &&
       !showNewBooking &&
       !editingBooking &&
       !editingTemplate &&
@@ -5468,7 +5481,7 @@ function App() {
             ) : viewMode === 'templates' ? (
               <>
                 <div className="form-grid">
-                  {isAdmin ? (
+                  {canManageFleet ? (
                     <label className="field">
                       <span>Member</span>
                       <select
@@ -6506,7 +6519,7 @@ function App() {
       !editingBoat &&
       !showGroupEditor &&
       viewMode === 'boats' &&
-      isAdmin
+      canManageFleet
         ? createPortal(
             <button
               className="fab"
