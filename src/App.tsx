@@ -5245,52 +5245,46 @@ function App() {
                 {isLoading ? (
                   <p className="empty-state">Loading schedule...</p>
                 ) : (
-                  <>
-                    {scheduleDayGroups.every((group) => group.items.length === 0) ? (
-                      <p className="empty-state">No bookings for the next 7 days.</p>
-                    ) : (
-                      scheduleDayGroups.map((group) => (
-                        <div key={group.date} className="booking-list-day">
-                          <h3 className="booking-list-date">{formatDayLabel(group.date)}</h3>
-                          {group.items.length === 0 ? (
-                            <p className="empty-state">No bookings.</p>
-                          ) : (
-                            <div className="booking-list-items">
-                              {group.items.map((booking) => {
-                                const boatName =
-                                  getRelatedName(booking.boats) ??
-                                  (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
-                                const boatType = getRelatedType(booking.boats)
-                                const memberName =
-                                  getRelatedName(booking.members) ??
-                                  (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
-                                return (
-                                  <button
-                                    key={booking.id}
-                                    type="button"
-                                    className={`${getScheduleItemPillClassName(booking)} booking-list-item`}
-                                    onClick={() => openScheduleItem(booking)}
-                                    disabled={!canOpenScheduleItem(booking)}
-                                    aria-disabled={!canOpenScheduleItem(booking)}
-                                  >
-                                    <div>
-                                      <strong>
-                                        {boatType ? `${boatType} ${boatName}` : boatName}
-                                      </strong>
-                                      <span>{memberName}</span>
-                                    </div>
-                                    <span className="booking-time">
-                                      {formatTime(booking.start_time)} - {formatTime(booking.end_time)}
-                                    </span>
-                                  </button>
-                                )
-                              })}
-                            </div>
-                          )}
+                  scheduleDayGroups.map((group) => (
+                    <div key={group.date} className="booking-list-day">
+                      <h3 className="booking-list-date">{formatDayLabel(group.date)}</h3>
+                      {group.items.length === 0 ? (
+                        <p className="empty-state">No bookings.</p>
+                      ) : (
+                        <div className="booking-list-items">
+                          {group.items.map((booking) => {
+                            const boatName =
+                              getRelatedName(booking.boats) ??
+                              (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
+                            const boatType = getRelatedType(booking.boats)
+                            const memberName =
+                              getRelatedName(booking.members) ??
+                              (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
+                            return (
+                              <button
+                                key={booking.id}
+                                type="button"
+                                className={`${getScheduleItemPillClassName(booking)} booking-list-item`}
+                                onClick={() => openScheduleItem(booking)}
+                                disabled={!canOpenScheduleItem(booking)}
+                                aria-disabled={!canOpenScheduleItem(booking)}
+                              >
+                                <div>
+                                  <strong>
+                                    {boatType ? `${boatType} ${boatName}` : boatName}
+                                  </strong>
+                                  <span>{memberName}</span>
+                                </div>
+                                <span className="booking-time">
+                                  {formatTime(booking.start_time)} - {formatTime(booking.end_time)}
+                                </span>
+                              </button>
+                            )
+                          })}
                         </div>
-                      ))
-                    )}
-                  </>
+                      )}
+                    </div>
+                  ))
                 )}
               </div>
             ) : viewMode === 'schedule' ? (
@@ -5391,6 +5385,9 @@ function App() {
                             </div>
                         </div>
                       </div>
+                      {group.items.length === 0 ? (
+                        <p className="empty-state">No bookings.</p>
+                      ) : null}
                     </div>
                   ))
                 )}
