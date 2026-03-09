@@ -126,6 +126,7 @@ body {
   gap: 4px;
   padding: 6px 8px;
   cursor: pointer;
+  position: relative;
 }
 
 .menu-button span {
@@ -166,10 +167,29 @@ body {
   border-radius: 8px;
   font: inherit;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .menu-item:hover {
   background: rgba(148, 163, 184, 0.2);
+}
+
+.menu-alert-dot,
+.menu-item-alert-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #dc2626;
+  flex: 0 0 auto;
+}
+
+.menu-alert-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
 }
 
 .app::before,

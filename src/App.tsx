@@ -609,6 +609,7 @@ function App() {
   const isGuest = userRole === 'guest'
   const canManageAccess = isAdmin || isCoordinator
   const canManageRaceEvents = isAdmin || isCoordinator
+  const pendingRaceEventRequestCount = isAdmin ? raceEventChangeRequests.length : 0
   const isSelectedDateInPast = selectedDate < getTodayString()
   const hasBlockingPendingConfirmations =
     !isAdmin && (pendingBookings.length > 0 || pendingTemplateConfirmations.length > 0)
@@ -1611,6 +1612,12 @@ function App() {
       fetchRaceEventChangeRequests()
     }
   }, [fetchRaceEventChangeRequests, fetchRaceEvents, session, viewMode])
+
+  useEffect(() => {
+    if (session && isAdmin) {
+      fetchRaceEventChangeRequests()
+    }
+  }, [fetchRaceEventChangeRequests, isAdmin, session])
 
   useEffect(() => {
     if (hasBlockingPendingConfirmations && viewMode !== 'pendingConfirmations') {
@@ -3860,6 +3867,9 @@ function App() {
                 if (next) {
                   fetchPendingBookings()
                   fetchPendingTemplateConfirmations()
+                  if (isAdmin) {
+                    fetchRaceEventChangeRequests()
+                  }
                 }
                 return next
               })
@@ -3869,6 +3879,9 @@ function App() {
             <span />
             <span />
             <span />
+            {isAdmin && pendingRaceEventRequestCount > 0 ? (
+              <span className="menu-alert-dot" aria-hidden="true" />
+            ) : null}
           </button>
           {isMenuOpen ? (
             <>
@@ -3928,6 +3941,9 @@ function App() {
                   }}
                 >
                   Race events
+                  {isAdmin && pendingRaceEventRequestCount > 0 ? (
+                    <span className="menu-item-alert-dot" aria-hidden="true" />
+                  ) : null}
                 </button>
                 {isAdmin ? (
                   <button
@@ -4498,7 +4514,18 @@ function App() {
                           const addedBoatIds = request.requested_boat_ids.filter(
                             (boatId) => !previousSet.has(boatId),
                           )
+                          const requestedSet = new Set(request.requested_boat_ids)
+                          const removedBoatIds = request.previous_boat_ids.filter(
+                            (boatId) => !requestedSet.has(boatId),
+                          )
                           const addedBoatLabels = addedBoatIds.map((boatId) => {
+                            const boat = boats.find((item) => item.id === boatId)
+                            if (!boat) {
+                              return 'Boat'
+                            }
+                            return boat.type ? `${boat.type} ${boat.name}` : boat.name
+                          })
+                          const removedBoatLabels = removedBoatIds.map((boatId) => {
                             const boat = boats.find((item) => item.id === boatId)
                             if (!boat) {
                               return 'Boat'
@@ -4517,10 +4544,16 @@ function App() {
                                 </span>
                                 <span>Requested by {requestedBy}</span>
                                 <span>
-                                  Add boats:{' '}
+                                  Added boats:{' '}
                                   {addedBoatLabels.length > 0
                                     ? addedBoatLabels.join(', ')
-                                    : 'No additional boats'}
+                                    : 'None'}
+                                </span>
+                                <span>
+                                  Removed boats:{' '}
+                                  {removedBoatLabels.length > 0
+                                    ? removedBoatLabels.join(', ')
+                                    : 'None'}
                                 </span>
                               </div>
                               <div className="modal-actions">
