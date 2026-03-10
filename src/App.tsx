@@ -56,8 +56,8 @@ const WIND_CONDITION_OPTIONS = [
   'Light/Moderate Breeze with significant gusting',
 ]
 const INCOMING_TIDE_OPTIONS = ['Yes', 'No']
-const LOADIN_PLAN_ROWS = 9
-const LOADIN_PLAN_COLUMNS = 9
+const LOADIN_PLAN_ROWS = 3
+const LOADIN_PLAN_COLUMNS = 3
 const LOADIN_PLAN_BLOCKED_CELL = `${LOADIN_PLAN_ROWS - 1}-${Math.floor(LOADIN_PLAN_COLUMNS / 2)}`
 
 type Member = {
@@ -598,9 +598,9 @@ function App() {
     end_date: getTodayString(),
     driver: '',
     boatIds: [] as string[],
-    loadinPlanCells: [] as string[],
+    loadinPlanCells: {} as Record<string, string>,
   })
-  const [loadinPlanDraft, setLoadinPlanDraft] = useState<string[]>([])
+  const [loadinPlanDraft, setLoadinPlanDraft] = useState<Record<string, string>>({})
   const [raceEventBoatSearch, setRaceEventBoatSearch] = useState('')
   const [boatPermissionEntries, setBoatPermissionEntries] = useState<BoatPermissionEntry[]>([])
   const [selectedPermissionMemberId, setSelectedPermissionMemberId] = useState('')
@@ -1243,9 +1243,9 @@ function App() {
       end_date: getTodayString(),
       driver: '',
       boatIds: [],
-      loadinPlanCells: [],
+      loadinPlanCells: {},
     })
-    setLoadinPlanDraft([])
+    setLoadinPlanDraft({})
     setRaceEventBoatSearch('')
   }
 
@@ -1261,9 +1261,9 @@ function App() {
       end_date: event?.end_date ?? event?.start_date ?? getTodayString(),
       driver: event?.driver ?? '',
       boatIds: (event?.race_event_boats ?? []).map((link) => link.boat_id),
-      loadinPlanCells: [],
+      loadinPlanCells: {},
     })
-    setLoadinPlanDraft([])
+    setLoadinPlanDraft({})
     setRaceEventBoatSearch('')
   }
 
@@ -6638,11 +6638,6 @@ function App() {
         <div className="modal-backdrop" onClick={resetRaceEventForm}>
           <div className="modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              {!raceEventReadOnly && !isCoordinatorRaceEventRequestMode ? (
-                <button className="button ghost" type="button" onClick={openLoadinPlanEditor}>
-                  LOADIN PLAN
-                </button>
-              ) : null}
               <h3>
                 {raceEventReadOnly
                   ? 'View race event'
@@ -6652,6 +6647,11 @@ function App() {
                     ? 'Edit race event'
                     : 'Create race event'}
               </h3>
+              {!raceEventReadOnly && !isCoordinatorRaceEventRequestMode ? (
+                <button className="button ghost" type="button" onClick={openLoadinPlanEditor}>
+                  LOADING PLAN
+                </button>
+              ) : null}
             </div>
             <div className="form-grid">
               <label className="field">
@@ -6807,7 +6807,9 @@ function App() {
         <div className="modal-backdrop" onClick={closeLoadinPlanEditor}>
           <div className="modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              <h3>Loadin plan</h3>
+              <h3>
+                Loading plan for event {raceEventForm.title.trim() || 'untitled event'}
+              </h3>
             </div>
             <div className="loadin-plan-grid" role="grid" aria-label="Loadin plan grid">
               {Array.from({ length: LOADIN_PLAN_ROWS }, (_, rowIndex) => (
@@ -6815,21 +6817,33 @@ function App() {
                   {Array.from({ length: LOADIN_PLAN_COLUMNS }, (_, columnIndex) => {
                     const cellKey = `${rowIndex}-${columnIndex}`
                     const blocked = cellKey === LOADIN_PLAN_BLOCKED_CELL
-                    const active = loadinPlanDraft.includes(cellKey)
+                    const cellValue = loadinPlanDraft[cellKey] ?? ''
                     return (
-                      <button
+                      <input
                         key={cellKey}
-                        className={`loadin-plan-cell${active ? ' selected' : ''}${blocked ? ' blocked' : ''}`}
-                        type="button"
+                        className={`loadin-plan-cell${cellValue ? ' selected' : ''}${blocked ? ' blocked' : ''}`}
+                        type="text"
                         role="gridcell"
-                        aria-pressed={active}
+                        value={blocked ? '' : cellValue}
+                        maxLength={2}
+                        inputMode="text"
+                        autoCapitalize="characters"
+                        autoCorrect="off"
+                        spellCheck={false}
                         disabled={blocked}
-                        onClick={() => {
-                          setLoadinPlanDraft((prev) =>
-                            prev.includes(cellKey)
-                              ? prev.filter((item) => item !== cellKey)
-                              : [...prev, cellKey],
-                          )
+                        onChange={(event) => {
+                          const nextValue = event.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2)
+                          setLoadinPlanDraft((prev) => {
+                            if (!nextValue) {
+                              const nextDraft = { ...prev }
+                              delete nextDraft[cellKey]
+                              return nextDraft
+                            }
+                            return {
+                              ...prev,
+                              [cellKey]: nextValue,
+                            }
+                          })
                         }}
                       />
                     )
@@ -6843,12 +6857,12 @@ function App() {
                 <p className="helper">No boats selected for this event.</p>
               ) : (
                 <div className="loadin-plan-boat-list">
-                  {raceEventForm.boatIds.map((boatId, index) => {
+                  {raceEventForm.boatIds.map((boatId) => {
                     const boat = boats.find((item) => item.id === boatId)
                     const label = boat ? `${boat.type ? `${boat.type} ` : ''}${boat.name}` : 'Boat'
                     return (
                       <div key={`loadin-boat-${boatId}`} className="loadin-plan-boat-item">
-                        {index + 1}. {label}
+                        {label}
                       </div>
                     )
                   })}

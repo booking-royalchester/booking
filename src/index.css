@@ -890,7 +890,7 @@ body {
 
 .loadin-plan-row {
   display: grid;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -900,7 +900,12 @@ body {
   border: 1px solid var(--stroke);
   border-radius: 8px;
   background: #f8fafc;
-  cursor: pointer;
+  cursor: text;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 0;
 }
 
 .loadin-plan-cell.selected {
