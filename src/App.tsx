@@ -9,7 +9,7 @@ const HOUR_WIDTH = 180
 const LANE_HEIGHT = 42
 const GANTT_BOTTOM_BUFFER = 24
 const BOOKING_SELECT =
-  'id, boat_id, member_id, start_time, end_time, usage_status, usage_confirmed_at, usage_confirmed_by, boats(name,type), members:members!bookings_member_id_fkey(name,email)'
+  'id, booking_group_id, boat_id, member_id, start_time, end_time, usage_status, usage_confirmed_at, usage_confirmed_by, boats(name,type), members:members!bookings_member_id_fkey(name,email)'
 const CREW_TYPE_OPTIONS = [
   'Novice or Young Junior (J15 or below)',
   'Experienced Junior',
@@ -80,10 +80,13 @@ type Boat = {
 
 type Booking = {
   id: string
+  booking_group_id?: string | null
   boat_id: string
   member_id: string | null
   start_time: string
   end_time: string
+  booking_ids?: string[]
+  boat_ids?: string[]
   usage_status?: 'scheduled' | 'pending' | 'confirmed' | 'cancelled' | null
   usage_confirmed_at?: string | null
   usage_confirmed_by?: string | null
@@ -389,11 +392,7 @@ const getGanttBoatDisplayName = (value: string | null | undefined) => {
   if (!value) {
     return 'Boat'
   }
-  const segments = value.trim().split(/\s+/).filter(Boolean)
-  if (segments.length <= 1) {
-    return segments[0] ?? value.trim()
-  }
-  return segments[1]
+  return value
 }
 
 const getRoleLabel = (role: UserRole) => {
@@ -481,6 +480,72 @@ const normalizeLinkedBooking = (value: Booking | Booking[] | null | undefined) =
     return null
   }
   return Array.isArray(value) ? value[0] ?? null : value
+}
+
+const toBoatArray = (
+  value:
+    | { name: string; type?: string | null }
+    | { name: string; type?: string | null }[]
+    | null
+    | undefined,
+) => {
+  if (!value) {
+    return [] as { name: string; type?: string | null }[]
+  }
+  return Array.isArray(value) ? value.filter(Boolean) : [value]
+}
+
+const formatBoatDisplayLabel = (boat: { name: string; type?: string | null }) => {
+  const shortName = abbreviateBoatNameForRaceEvents(boat.name)
+  return boat.type ? `${boat.type} ${shortName}` : shortName
+}
+
+const getBookingBoatDisplay = (booking: {
+  boats?: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null
+  boat_label?: string | null
+}) => {
+  const relatedBoats = toBoatArray(booking.boats)
+  if (relatedBoats.length === 0) {
+    return booking.boat_label ?? 'Boat'
+  }
+  return relatedBoats.map((boat) => formatBoatDisplayLabel(boat)).join(', ')
+}
+
+const groupBookings = (rows: Booking[]) => {
+  const groups = new Map<string, Booking>()
+
+  rows.forEach((row) => {
+    const key = row.booking_group_id ?? row.id
+    const rowBoats = toBoatArray(row.boats)
+    const existing = groups.get(key)
+    if (!existing) {
+      groups.set(key, {
+        ...row,
+        booking_group_id: row.booking_group_id ?? row.id,
+        booking_ids: [row.id],
+        boat_ids: row.boat_id ? [row.boat_id] : [],
+        boats: rowBoats,
+      })
+      return
+    }
+
+    const nextBoatIds = Array.from(new Set([...(existing.boat_ids ?? []), row.boat_id]))
+    const nextBoats = [...toBoatArray(existing.boats)]
+    rowBoats.forEach((boat) => {
+      if (!nextBoats.some((item) => item.name === boat.name && (item.type ?? null) === (boat.type ?? null))) {
+        nextBoats.push(boat)
+      }
+    })
+
+    groups.set(key, {
+      ...existing,
+      booking_ids: [...(existing.booking_ids ?? []), row.id],
+      boat_ids: nextBoatIds,
+      boats: nextBoats,
+    })
+  })
+
+  return Array.from(groups.values())
 }
 
 const normalizeTemplateBooking = (
@@ -1508,7 +1573,7 @@ function App() {
       return
     }
 
-    const nextPendingBookings = data ?? []
+    const nextPendingBookings = groupBookings((data ?? []) as Booking[])
     setPendingBookings(nextPendingBookings)
     if (
       selectedPendingBookingId &&
@@ -1597,7 +1662,7 @@ function App() {
         .eq('exception_date', date),
     ])
 
-    setBookings(bookingsData ?? [])
+    setBookings(groupBookings((bookingsData ?? []) as Booking[]))
     setTemplateExceptions(exceptionsData ?? [])
   }, [])
 
@@ -1865,7 +1930,7 @@ function App() {
         return
       }
 
-      setBookings(bookingsResult.data ?? [])
+      setBookings(groupBookings((bookingsResult.data ?? []) as Booking[]))
       setTemplateBookings(templatesResult.data ?? [])
       setTemplateExceptions(exceptionsResult.data ?? [])
       const pendingApprovals = (approvalRequestsResult.data ?? []) as Array<{
@@ -2210,7 +2275,7 @@ function App() {
     setEditingTemplate(null)
     setShowNewBooking(false)
     setBookingBoatId(booking.boat_id ?? '')
-    setBookingBoatIds([])
+    setBookingBoatIds(booking.boat_ids ?? (booking.boat_id ? [booking.boat_id] : []))
     setBoatSearch('')
     setBookingMemberId(booking.member_id ?? '')
     setStartTime(formatTimeInput(booking.start_time))
@@ -2929,11 +2994,7 @@ function App() {
       return
     }
 
-    const selectedBoatIds = editingBooking
-      ? bookingBoatId
-        ? [bookingBoatId]
-        : []
-      : bookingBoatIds
+    const selectedBoatIds = bookingBoatIds
     if (selectedBoatIds.length === 0) {
       setError('Select at least one boat for the booking.')
       return
@@ -3016,14 +3077,10 @@ function App() {
 
     let conflictQuery = supabase
       .from('bookings')
-      .select('id, boat_id')
+      .select('id, booking_group_id, boat_id')
       .in('boat_id', selectedBoatIds)
       .lt('start_time', endDate.toISOString())
       .gt('end_time', startDate.toISOString())
-
-    if (editingBooking) {
-      conflictQuery = conflictQuery.neq('id', editingBooking.id)
-    }
 
     const { data: conflicts, error: conflictError } = await conflictQuery
 
@@ -3031,6 +3088,14 @@ function App() {
       setError(conflictError.message)
       return
     }
+
+    const filteredConflicts = (conflicts ?? []).filter((row: { id: string; booking_group_id?: string | null }) => {
+      if (!editingBooking) {
+        return true
+      }
+      const bookingIds = new Set(editingBooking.booking_ids ?? [editingBooking.id])
+      return !bookingIds.has(row.id)
+    })
 
     const templateConflicts = templateBookings.filter((template) => {
       if (!template.boat_id) {
@@ -3056,10 +3121,10 @@ function App() {
       return
     }
 
-    if (conflicts && conflicts.length > 0) {
+    if (filteredConflicts.length > 0) {
       const conflictNames = Array.from(
         new Set(
-          conflicts
+          filteredConflicts
             .map((row: { boat_id?: string }) =>
               boats.find((boat) => boat.id === row.boat_id)?.name ?? null,
             )
@@ -3078,27 +3143,62 @@ function App() {
     }
 
     if (editingBooking) {
-      const { error: updateError } = await supabase
-        .from('bookings')
-        .update({
-          boat_id: bookingBoatId,
-          member_id: effectiveMemberId,
-          start_time: startDate.toISOString(),
-          end_time: endDate.toISOString(),
-        })
-        .eq('id', editingBooking.id)
-
-      if (updateError) {
-        setError(updateError.message)
-        return
+      const existingIds = editingBooking.booking_ids ?? [editingBooking.id]
+      const bookingGroupId = editingBooking.booking_group_id ?? editingBooking.id
+      const sharedPayload = {
+        member_id: effectiveMemberId,
+        start_time: startDate.toISOString(),
+        end_time: endDate.toISOString(),
+        booking_group_id: bookingGroupId,
       }
+
+      for (let index = 0; index < selectedBoatIds.length; index += 1) {
+        const boatId = selectedBoatIds[index]
+        const targetId = existingIds[index]
+        if (targetId) {
+          const { error: updateError } = await supabase
+            .from('bookings')
+            .update({
+              ...sharedPayload,
+              boat_id: boatId,
+            })
+            .eq('id', targetId)
+
+          if (updateError) {
+            setError(updateError.message)
+            return
+          }
+        } else {
+          const { error: insertError } = await supabase.from('bookings').insert({
+            ...sharedPayload,
+            boat_id: boatId,
+          })
+
+          if (insertError) {
+            setError(insertError.message)
+            return
+          }
+        }
+      }
+
+      if (existingIds.length > selectedBoatIds.length) {
+        const idsToDelete = existingIds.slice(selectedBoatIds.length)
+        const { error: deleteError } = await supabase.from('bookings').delete().in('id', idsToDelete)
+        if (deleteError) {
+          setError(deleteError.message)
+          return
+        }
+      }
+
       setStatus('Booking updated.')
     } else {
+      const bookingGroupId = crypto.randomUUID()
       const directBookingBoatIds = selectedBoatIds.filter(
         (boatId) => !approvalRequiredBoatIds.includes(boatId),
       )
       const createdBookingIds: string[] = []
       const inserts = directBookingBoatIds.map((boatId) => ({
+        booking_group_id: bookingGroupId,
         boat_id: boatId,
         member_id: effectiveMemberId,
         start_time: startDate.toISOString(),
@@ -3217,7 +3317,7 @@ function App() {
       return
     }
 
-    setBookings(bookingsResult.data ?? [])
+    setBookings(groupBookings((bookingsResult.data ?? []) as Booking[]))
     const pendingApprovals = (approvalRequestsResult.data ?? []) as Array<{
       id: string
       boat_id: string
@@ -3261,10 +3361,11 @@ function App() {
       return
     }
 
+    const bookingIds = editingBooking.booking_ids ?? [editingBooking.id]
     const { error: deleteError } = await supabase
       .from('bookings')
       .delete()
-      .eq('id', editingBooking.id)
+      .in('id', bookingIds)
 
     if (deleteError) {
       setError(deleteError.message)
@@ -3285,7 +3386,7 @@ function App() {
       .gt('end_time', dayStart.toISOString())
       .order('start_time', { ascending: true })
 
-    setBookings(data ?? [])
+    setBookings(groupBookings((data ?? []) as Booking[]))
   }
 
   const handleDeleteTemplate = async () => {
@@ -3358,6 +3459,7 @@ function App() {
       return
     }
 
+    const bookingIds = booking.booking_ids ?? [booking.id]
     const { error: updateError } = await supabase
       .from('bookings')
       .update({
@@ -3365,7 +3467,7 @@ function App() {
         usage_confirmed_at: new Date().toISOString(),
         usage_confirmed_by: currentMember.id,
       })
-      .eq('id', booking.id)
+      .in('id', bookingIds)
       .eq('usage_status', 'pending')
 
     if (updateError) {
@@ -4923,12 +5025,7 @@ function App() {
                         </button>
                         <div className="template-summary pending-confirmation-card">
                           <div className="template-info">
-                            <strong>
-                              {getRelatedType(selectedPendingBooking.boats)
-                                ? `${getRelatedType(selectedPendingBooking.boats)} `
-                                : ''}
-                              {getRelatedName(selectedPendingBooking.boats) ?? 'Boat'}
-                            </strong>
+                            <strong>{getBookingBoatDisplay(selectedPendingBooking)}</strong>
                             <span>{formatDayLabel(selectedPendingBooking.start_time.slice(0, 10))}</span>
                             <span>
                               {formatTime(selectedPendingBooking.start_time)} -{' '}
@@ -5045,8 +5142,7 @@ function App() {
                           </p>
                         ) : null}
                         {pendingBookings.map((booking) => {
-                          const boatName = getRelatedName(booking.boats) ?? 'Boat'
-                          const boatType = getRelatedType(booking.boats)
+                          const boatName = getBookingBoatDisplay(booking)
                           const memberName = getRelatedName(booking.members) ?? 'Member'
                           const busy = pendingActionId === booking.id
                           return (
@@ -5073,10 +5169,7 @@ function App() {
                               }}
                             >
                               <div className="template-info">
-                                <strong>
-                                  {boatType ? `${boatType} ` : ''}
-                                  {boatName}
-                                </strong>
+                                    <strong>{boatName}</strong>
                                 <span>{formatDayLabel(booking.start_time.slice(0, 10))}</span>
                                 <span>
                                   {formatTime(booking.start_time)} - {formatTime(booking.end_time)}
@@ -5590,10 +5683,9 @@ function App() {
                       ) : (
                         <div className="booking-list-items">
                           {group.items.map((booking) => {
-                            const boatName =
-                              getRelatedName(booking.boats) ??
-                              (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
-                            const boatType = getRelatedType(booking.boats)
+                            const boatName = booking.isTemplate
+                              ? getRelatedName(booking.boats) ?? (booking.boat_label ?? 'Boat')
+                              : getBookingBoatDisplay(booking)
                             const memberName =
                               getRelatedName(booking.members) ??
                               (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
@@ -5607,9 +5699,7 @@ function App() {
                                 aria-disabled={!canOpenScheduleItem(booking)}
                               >
                                 <div>
-                                  <strong>
-                                    {boatType ? `${boatType} ${boatName}` : boatName}
-                                  </strong>
+                                  <strong>{boatName}</strong>
                                     <span>
                                       {booking.pendingApproval
                                         ? `${memberName} - PENDING`
@@ -5691,11 +5781,10 @@ function App() {
                               </div>
                               <div className="gantt-lanes">
                                 {group.items.map((booking) => {
-                                  const fullBoatName =
-                                    getRelatedName(booking.boats) ??
-                                    (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
+                                  const fullBoatName = booking.isTemplate
+                                    ? getRelatedName(booking.boats) ?? (booking.boat_label ?? 'Boat')
+                                    : getBookingBoatDisplay(booking)
                                   const boatName = getGanttBoatDisplayName(fullBoatName)
-                                  const boatType = getRelatedType(booking.boats)
                                   const memberName =
                                     getRelatedName(booking.members) ??
                                     (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
@@ -5718,9 +5807,7 @@ function App() {
                                       aria-disabled={!canOpenScheduleItem(booking)}
                                     >
                                       <div>
-                                        <strong>
-                                          {boatType ? `${boatType} ${boatName}` : boatName}
-                                        </strong>
+                                        <strong>{boatName}</strong>
                                         <span>
                                           {booking.pendingApproval
                                             ? `${memberName} - PENDING`
@@ -5789,11 +5876,10 @@ function App() {
                       </div>
                       <div className="gantt-lanes">
                         {ganttLayout.items.map((booking) => {
-                          const fullBoatName =
-                            getRelatedName(booking.boats) ??
-                            (booking.isTemplate ? booking.boat_label ?? 'Boat' : 'Boat')
+                          const fullBoatName = booking.isTemplate
+                            ? getRelatedName(booking.boats) ?? (booking.boat_label ?? 'Boat')
+                            : getBookingBoatDisplay(booking)
                           const boatName = getGanttBoatDisplayName(fullBoatName)
-                          const boatType = getRelatedType(booking.boats)
                           const memberName =
                             getRelatedName(booking.members) ??
                             (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
@@ -5816,7 +5902,7 @@ function App() {
                               aria-disabled={!canOpenScheduleItem(booking)}
                             >
                               <div>
-                                <strong>{boatType ? `${boatType} ${boatName}` : boatName}</strong>
+                                <strong>{boatName}</strong>
                                 <span>{memberName}</span>
                               </div>
                             </button>
@@ -6244,86 +6330,67 @@ function App() {
                       <input value={currentMember?.name ?? ''} readOnly />
                     </label>
                   )}
-                  {editingBooking ? (
-                    <label className="field">
-                      <span>Boat</span>
-                      <select
-                        value={bookingBoatId}
-                        onChange={(event) => setBookingBoatId(event.target.value)}
-                        disabled={isEditingBookingLocked}
-                        onFocus={refreshBoatAccess}
-                      >
-                        <option value="">Select a boat</option>
-                        {(isAdmin ? boats : allowedBoats).map((boat) => (
-                          <option key={boat.id} value={boat.id}>
-                            {boat.type ? `${boat.type} ${boat.name}` : boat.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : (
-                    <div className="field">
-                      <span>Boats</span>
-                      <input
-                        type="text"
-                        placeholder="Search boat type or name"
-                        value={boatSearch}
-                        onChange={(event) => setBoatSearch(event.target.value)}
-                        disabled={isEditingBookingLocked}
-                        onFocus={refreshBoatAccess}
-                      />
-                      <div className="boat-chips">
-                        {bookingBoatIds.length === 0 ? (
-                          <span className="chip muted">No boats selected</span>
-                        ) : (
-                          bookingBoatIds.map((id) => {
-                            const boat = bookingBoatsSource.find((item) => item.id === id)
-                            const label = boat
-                              ? boat.type
-                                ? `${boat.type} ${boat.name}`
-                                : boat.name
-                              : id
-                            return (
-                              <button
-                                key={id}
-                                type="button"
-                                className="chip"
-                                onClick={() =>
-                                  setBookingBoatIds((prev) =>
-                                    prev.filter((item) => item !== id),
-                                  )
-                                }
-                              >
-                                {label} ✕
-                              </button>
-                            )
-                          })
-                        )}
-                      </div>
-                      <div className="boat-list">
-                        {filteredBookingBoats.map((boat) => {
-                          const label = boat.type ? `${boat.type} ${boat.name}` : boat.name
-                          const checked = bookingBoatIds.includes(boat.id)
+                  <div className="field">
+                    <span>Boats</span>
+                    <input
+                      type="text"
+                      placeholder="Search boat type or name"
+                      value={boatSearch}
+                      onChange={(event) => setBoatSearch(event.target.value)}
+                      disabled={isEditingBookingLocked}
+                      onFocus={refreshBoatAccess}
+                    />
+                    <div className="boat-chips">
+                      {bookingBoatIds.length === 0 ? (
+                        <span className="chip muted">No boats selected</span>
+                      ) : (
+                        bookingBoatIds.map((id) => {
+                          const boat = bookingBoatsSource.find((item) => item.id === id)
+                          const label = boat
+                            ? boat.type
+                              ? `${boat.type} ${boat.name}`
+                              : boat.name
+                            : id
                           return (
-                            <label key={boat.id} className="boat-option">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                disabled={isEditingBookingLocked}
-                                onChange={(event) => {
-                                  const next = event.target.checked
-                                  setBookingBoatIds((prev) =>
-                                    next ? [...prev, boat.id] : prev.filter((id) => id !== boat.id),
-                                  )
-                                }}
-                              />
-                              <span>{label}</span>
-                            </label>
+                            <button
+                              key={id}
+                              type="button"
+                              className="chip"
+                              onClick={() =>
+                                setBookingBoatIds((prev) =>
+                                  prev.filter((item) => item !== id),
+                                )
+                              }
+                            >
+                              {label} ✕
+                            </button>
                           )
-                        })}
-                      </div>
+                        })
+                      )}
                     </div>
-                  )}
+                    <div className="boat-list">
+                      {filteredBookingBoats.map((boat) => {
+                        const label = boat.type ? `${boat.type} ${boat.name}` : boat.name
+                        const checked = bookingBoatIds.includes(boat.id)
+                        return (
+                          <label key={boat.id} className="boat-option">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={isEditingBookingLocked}
+                              onChange={(event) => {
+                                const next = event.target.checked
+                                setBookingBoatIds((prev) =>
+                                  next ? [...prev, boat.id] : prev.filter((id) => id !== boat.id),
+                                )
+                              }}
+                            />
+                            <span>{label}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
                   <label className="field">
                     <span>Start time</span>
                     <input
