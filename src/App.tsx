@@ -247,6 +247,13 @@ type ScheduleItem = {
   members?: { name: string } | { name: string }[] | null
 }
 
+type TemplateBookingDraft = {
+  templateId: string
+  memberId: string
+  occurrenceDate: string
+  confirmationId?: string | null
+}
+
 const getTodayString = () => {
   const now = new Date()
   const year = now.getFullYear()
@@ -621,6 +628,7 @@ function App() {
   const [showAccessEditor, setShowAccessEditor] = useState(false)
   const [showGroupEditor, setShowGroupEditor] = useState(false)
   const [editingGroup, setEditingGroup] = useState<CoordinatorGroup | null>(null)
+  const [templateBookingDraft, setTemplateBookingDraft] = useState<TemplateBookingDraft | null>(null)
   const [coordinatorGroups, setCoordinatorGroups] = useState<CoordinatorGroup[]>([])
   const [groupForm, setGroupForm] = useState({
     title: '',
@@ -2228,6 +2236,7 @@ function App() {
     setShowNewBooking(false)
     setEditingBooking(null)
     setEditingTemplate(null)
+    setTemplateBookingDraft(null)
     setBookingBoatId('')
     setBookingBoatIds([])
     setBoatSearch('')
@@ -2238,6 +2247,94 @@ function App() {
     }
     setStartTime('07:30')
     setEndTime('08:30')
+  }
+
+  const startTemplateBookingDraft = ({
+    template,
+    templateId,
+    memberId,
+    occurrenceDate,
+    confirmationId,
+  }: {
+    template: TemplateBooking
+    templateId: string
+    memberId: string
+    occurrenceDate: string
+    confirmationId?: string | null
+  }) => {
+    setError(null)
+    setStatus(null)
+    setTemplateBookingDraft({
+      templateId,
+      memberId,
+      occurrenceDate,
+      confirmationId,
+    })
+    setEditingTemplate(null)
+    setEditingBooking(null)
+    setShowNewBooking(true)
+    setSelectedDate(occurrenceDate)
+    setBookingBoatId('')
+    setBookingBoatIds([])
+    setBoatSearch('')
+    setBookingMemberId(memberId)
+    setStartTime(normalizeTime(template.start_time))
+    setEndTime(normalizeTime(template.end_time))
+  }
+
+  const finalizeTemplateBookingDraft = async (bookingIds: string[]) => {
+    if (!templateBookingDraft) {
+      return
+    }
+
+    const respondedAt = new Date().toISOString()
+    const exceptionPayload = {
+      template_id: templateBookingDraft.templateId,
+      exception_date: templateBookingDraft.occurrenceDate,
+    }
+    const bookingId = bookingIds.length === 1 ? bookingIds[0] : null
+
+    const { error: exceptionError } = await supabase
+      .from('template_exceptions')
+      .upsert(exceptionPayload, { onConflict: 'template_id,exception_date' })
+
+    if (exceptionError) {
+      throw new Error(exceptionError.message)
+    }
+
+    const { error: updateError } = templateBookingDraft.confirmationId
+      ? await supabase
+          .from('template_confirmations')
+          .update({
+            status: 'confirmed',
+            booking_id: bookingId,
+            responded_at: respondedAt,
+          })
+          .eq('id', templateBookingDraft.confirmationId)
+      : await supabase.from('template_confirmations').upsert(
+          {
+            template_id: templateBookingDraft.templateId,
+            member_id: templateBookingDraft.memberId,
+            occurrence_date: templateBookingDraft.occurrenceDate,
+            status: 'confirmed',
+            booking_id: bookingId,
+            responded_at: respondedAt,
+          },
+          { onConflict: 'template_id,occurrence_date' },
+        )
+
+    if (updateError) {
+      throw new Error(updateError.message)
+    }
+
+    await Promise.all([
+      fetchPendingTemplateConfirmations(),
+      fetchPendingBookings(),
+      viewMode === 'schedule' && selectedDate === templateBookingDraft.occurrenceDate
+        ? refreshScheduleDay(templateBookingDraft.occurrenceDate)
+        : Promise.resolve(),
+    ])
+    setTemplateBookingDraft(null)
   }
 
   const canEditBooking = (booking: { member_id: string | null }) => {
@@ -3000,6 +3097,7 @@ function App() {
       const directBookingBoatIds = selectedBoatIds.filter(
         (boatId) => !approvalRequiredBoatIds.includes(boatId),
       )
+      const createdBookingIds: string[] = []
       const inserts = directBookingBoatIds.map((boatId) => ({
         boat_id: boatId,
         member_id: effectiveMemberId,
@@ -3008,12 +3106,17 @@ function App() {
       }))
 
       if (inserts.length > 0) {
-        const { error: insertError } = await supabase.from('bookings').insert(inserts).select('id')
+        const { data: insertedBookings, error: insertError } = await supabase
+          .from('bookings')
+          .insert(inserts)
+          .select('id')
 
         if (insertError) {
           setError(insertError.message)
           return
         }
+
+        createdBookingIds.push(...(insertedBookings ?? []).map((booking) => booking.id))
       }
 
       if (approvalRequiredBoatIds.length > 0) {
@@ -3047,6 +3150,15 @@ function App() {
               requestIds: createdRequests.map((row) => row.id),
             }),
           }).catch(() => undefined)
+        }
+      }
+
+      if (templateBookingDraft) {
+        try {
+          await finalizeTemplateBookingDraft(createdBookingIds)
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Unable to confirm template booking.')
+          return
         }
       }
 
@@ -3421,6 +3533,18 @@ function App() {
       return
     }
 
+    if (nextStatus === 'confirmed' && !template.boat_id) {
+      startTemplateBookingDraft({
+        template,
+        templateId: confirmation.template_id,
+        memberId: confirmation.member_id,
+        occurrenceDate: confirmation.occurrence_date,
+        confirmationId: confirmation.id,
+      })
+      setPendingTemplateActionId(null)
+      return
+    }
+
     try {
       await resolveTemplateOccurrence({
         confirmationId: confirmation.id,
@@ -3455,6 +3579,16 @@ function App() {
     const template = templateBookings.find((item) => item.id === editingTemplate.templateId)
     if (!template) {
       setError('Template booking not found.')
+      return
+    }
+
+    if (!template.boat_id) {
+      startTemplateBookingDraft({
+        template,
+        templateId: editingTemplate.templateId,
+        memberId: editingTemplate.member_id,
+        occurrenceDate: selectedDate,
+      })
       return
     }
 
@@ -5948,6 +6082,8 @@ function App() {
                   ? 'Edit template'
                   : editingTemplate
                     ? 'Template booking'
+                    : templateBookingDraft
+                      ? 'Complete template booking'
                     : editingBooking
                       ? isPastBooking(editingBooking)
                         ? 'View booking'
@@ -6070,6 +6206,11 @@ function App() {
             ) : (
               <>
                 <div className="form-grid">
+                  {templateBookingDraft ? (
+                    <p className="helper">
+                      Select at least one boat to confirm this generic template booking.
+                    </p>
+                  ) : null}
                   {editingBooking ? (
                     <p className="helper">{getBookingUsageLabel(editingBooking)}</p>
                   ) : null}
