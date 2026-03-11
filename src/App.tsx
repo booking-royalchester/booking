@@ -426,6 +426,19 @@ const toDateInputValue = (value: string) => {
   return `${year}-${month}-${day}`
 }
 
+const addMinutesToTime = (value: string, minutesToAdd: number) => {
+  const [hoursValue, minutesValue] = value.split(':')
+  const hours = Number(hoursValue)
+  const minutes = Number(minutesValue)
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) {
+    return value
+  }
+  const totalMinutes = hours * 60 + minutes + minutesToAdd
+  const nextHours = Math.floor(totalMinutes / 60)
+  const nextMinutes = totalMinutes % 60
+  return `${String(nextHours).padStart(2, '0')}:${String(nextMinutes).padStart(2, '0')}`
+}
+
 const canOpenRiskAssessment = (booking: Booking) => {
   const bookingStart = new Date(booking.start_time).getTime()
   if (Number.isNaN(bookingStart)) {
@@ -727,7 +740,7 @@ function App() {
   const [bookingBoatIds, setBookingBoatIds] = useState<string[]>([])
   const [boatSearch, setBoatSearch] = useState('')
   const [startTime, setStartTime] = useState('07:30')
-  const [endTime, setEndTime] = useState('08:30')
+  const [endTime, setEndTime] = useState('09:00')
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [editingBoat, setEditingBoat] = useState<Boat | null>(null)
   const [editingRaceEvent, setEditingRaceEvent] = useState<RaceEvent | null>(null)
@@ -2401,7 +2414,7 @@ function App() {
       setBookingMemberId('')
     }
     setStartTime('07:30')
-    setEndTime('08:30')
+    setEndTime('09:00')
   }
 
   const reloadTemplateWeekday = async (weekday: number) => {
@@ -6305,9 +6318,11 @@ function App() {
                   setBookingBoatIds([])
                   setBookingMemberId('')
                   setStartTime('07:30')
-                  setEndTime('08:30')
+                  setEndTime('09:00')
                 } else if (viewMode === 'schedule' && currentMember && !isAdmin) {
                   setBookingMemberId(currentMember.id)
+                  setStartTime('07:30')
+                  setEndTime('09:00')
                 }
                 setBookingBoatIds([])
                 setBoatSearch('')
@@ -6471,22 +6486,30 @@ function App() {
                       })}
                     </div>
                   </div>
-                  <label className="field">
-                    <span>Start time</span>
-                    <input
-                      type="time"
-                      value={startTime}
-                      onChange={(event) => setStartTime(event.target.value)}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>End time</span>
-                    <input
-                      type="time"
-                      value={endTime}
-                      onChange={(event) => setEndTime(event.target.value)}
-                    />
-                  </label>
+                  <div className="race-event-date-row">
+                    <label className="field compact">
+                      <span>Start time</span>
+                      <input
+                        type="time"
+                        value={startTime}
+                        onChange={(event) => {
+                          const nextStart = event.target.value
+                          setStartTime(nextStart)
+                          if (nextStart) {
+                            setEndTime(addMinutesToTime(nextStart, 90))
+                          }
+                        }}
+                      />
+                    </label>
+                    <label className="field compact">
+                      <span>End time</span>
+                      <input
+                        type="time"
+                        value={endTime}
+                        onChange={(event) => setEndTime(event.target.value)}
+                      />
+                    </label>
+                  </div>
                   <button className="button primary" onClick={handleSaveTemplate}>
                     {editingTemplate ? 'Save template' : 'Create template'}
                   </button>
@@ -6599,35 +6622,34 @@ function App() {
                       })}
                     </div>
                   </div>
-                  <label className="field">
-                    <span>Start time</span>
-                    <input
-                      type="time"
-                      value={startTime}
-                      min="07:30"
-                      disabled={isEditingBookingLocked}
-                      onChange={(event) => {
-                        const nextStart = event.target.value
-                        setStartTime(nextStart)
-                        if (nextStart) {
-                          const base = new Date(`2000-01-01T${nextStart}:00`)
-                          base.setHours(base.getHours() + 1)
-                          const nextEnd = `${String(base.getHours()).padStart(2, '0')}:${String(base.getMinutes()).padStart(2, '0')}`
-                          setEndTime(nextEnd)
-                        }
-                      }}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>End time</span>
-                    <input
-                      type="time"
-                      value={endTime}
-                      min="07:30"
-                      disabled={isEditingBookingLocked}
-                      onChange={(event) => setEndTime(event.target.value)}
-                    />
-                  </label>
+                  <div className="race-event-date-row">
+                    <label className="field compact">
+                      <span>Start time</span>
+                      <input
+                        type="time"
+                        value={startTime}
+                        min="07:30"
+                        disabled={isEditingBookingLocked}
+                        onChange={(event) => {
+                          const nextStart = event.target.value
+                          setStartTime(nextStart)
+                          if (nextStart) {
+                            setEndTime(addMinutesToTime(nextStart, 90))
+                          }
+                        }}
+                      />
+                    </label>
+                    <label className="field compact">
+                      <span>End time</span>
+                      <input
+                        type="time"
+                        value={endTime}
+                        min="07:30"
+                        disabled={isEditingBookingLocked}
+                        onChange={(event) => setEndTime(event.target.value)}
+                      />
+                    </label>
+                  </div>
                   {!isEditingBookingLocked ? (
                     <>
                       <button className="button primary" onClick={handleSaveBooking}>
