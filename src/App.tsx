@@ -5843,9 +5843,7 @@ function App() {
                       ) : (
                         <div className="booking-list-items">
                           {group.items.map((booking) => {
-                            const boatName = booking.isTemplate
-                              ? getRelatedName(booking.boats) ?? (booking.boat_label ?? 'Boat')
-                              : getBookingBoatDisplay(booking)
+                            const boatName = getBookingBoatDisplay(booking)
                             const memberName =
                               getRelatedName(booking.members) ??
                               (booking.isTemplate ? booking.member_label ?? 'Member' : 'Member')
@@ -5941,9 +5939,7 @@ function App() {
                               </div>
                               <div className="gantt-lanes">
                                 {group.items.map((booking) => {
-                                  const fullBoatName = booking.isTemplate
-                                    ? getRelatedName(booking.boats) ?? (booking.boat_label ?? 'Boat')
-                                    : getBookingBoatDisplay(booking)
+                                  const fullBoatName = getBookingBoatDisplay(booking)
                                   const boatName = getGanttBoatDisplayName(fullBoatName)
                                   const memberName =
                                     getRelatedName(booking.members) ??
@@ -6036,9 +6032,7 @@ function App() {
                       </div>
                       <div className="gantt-lanes">
                         {ganttLayout.items.map((booking) => {
-                          const fullBoatName = booking.isTemplate
-                            ? getRelatedName(booking.boats) ?? (booking.boat_label ?? 'Boat')
-                            : getBookingBoatDisplay(booking)
+                          const fullBoatName = getBookingBoatDisplay(booking)
                           const boatName = getGanttBoatDisplayName(fullBoatName)
                           const memberName =
                             getRelatedName(booking.members) ??
