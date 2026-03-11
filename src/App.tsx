@@ -3781,7 +3781,17 @@ function App() {
       return
     }
 
-    const template = normalizeTemplateBooking(confirmation.booking_templates)
+    const linkedTemplate = normalizeTemplateBooking(confirmation.booking_templates)
+    const template =
+      (linkedTemplate
+        ? templateBookings.find(
+            (item) =>
+              (item.template_group_id ?? item.id) ===
+              (linkedTemplate.template_group_id ?? linkedTemplate.id),
+          )
+        : null) ??
+      linkedTemplate
+
     if (!template) {
       setError('Template booking not found.')
       return
@@ -5233,7 +5243,16 @@ function App() {
                           <>
                             <h3>Template bookings to confirm</h3>
                             {pendingTemplateConfirmations.map((confirmation) => {
-                              const template = normalizeTemplateBooking(confirmation.booking_templates)
+                              const linkedTemplate = normalizeTemplateBooking(confirmation.booking_templates)
+                              const template =
+                                (linkedTemplate
+                                  ? templateBookings.find(
+                                      (item) =>
+                                        (item.template_group_id ?? item.id) ===
+                                        (linkedTemplate.template_group_id ?? linkedTemplate.id),
+                                    )
+                                  : null) ??
+                                linkedTemplate
                               const boatName = template
                                 ? getBookingBoatDisplay(template)
                                 : 'Boat'
