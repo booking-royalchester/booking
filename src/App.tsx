@@ -123,6 +123,8 @@ type TemplateConfirmation = {
   occurrence_date: string
   status: 'pending' | 'confirmed' | 'cancelled'
   booking_id?: string | null
+  confirmation_ids?: string[]
+  template_ids?: string[]
   notified_at?: string | null
   responded_at?: string | null
   booking_templates?: TemplateBooking | TemplateBooking[] | null
@@ -258,9 +260,11 @@ type ScheduleItem = {
 
 type TemplateBookingDraft = {
   templateId: string
+  templateIds?: string[]
   memberId: string
   occurrenceDate: string
   confirmationId?: string | null
+  confirmationIds?: string[]
 }
 
 const getTodayString = () => {
@@ -594,6 +598,47 @@ const groupTemplates = (rows: TemplateBooking[]) => {
       template_ids: [...(existing.template_ids ?? []), row.id],
       boat_ids: nextBoatIds,
       boats: nextBoats,
+    })
+  })
+
+  return Array.from(groups.values())
+}
+
+const groupPendingTemplateConfirmations = (rows: TemplateConfirmation[]) => {
+  const groups = new Map<string, TemplateConfirmation>()
+
+  rows.forEach((row) => {
+    const template = normalizeTemplateBooking(row.booking_templates)
+    if (!template) {
+      return
+    }
+    const key = `${template.template_group_id ?? template.id}:${row.occurrence_date}:${row.member_id}`
+    const existing = groups.get(key)
+    if (!existing) {
+      groups.set(key, {
+        ...row,
+        confirmation_ids: [row.id],
+        template_ids: template.template_ids ?? [template.id],
+        booking_templates: template,
+        members: Array.isArray(row.members) ? row.members[0] ?? null : row.members ?? null,
+      })
+      return
+    }
+
+    const groupedTemplate = groupTemplates([
+      normalizeTemplateBooking(existing.booking_templates),
+      template,
+    ].filter(Boolean) as TemplateBooking[])[0]
+
+    groups.set(key, {
+      ...existing,
+      confirmation_ids: [...(existing.confirmation_ids ?? []), row.id],
+      template_ids: Array.from(
+        new Set([...(existing.template_ids ?? []), ...(template.template_ids ?? [template.id])]),
+      ),
+      booking_templates: groupedTemplate,
+      notified_at: existing.notified_at ?? row.notified_at ?? null,
+      responded_at: existing.responded_at ?? row.responded_at ?? null,
     })
   })
 
@@ -1634,7 +1679,7 @@ function App() {
     let query = supabase
       .from('template_confirmations')
       .select(
-        'id, template_id, member_id, occurrence_date, status, booking_id, notified_at, responded_at, booking_templates(id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name,email)), members(name,email)',
+        'id, template_id, member_id, occurrence_date, status, booking_id, notified_at, responded_at, booking_templates(id, template_group_id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name,email)), members(name,email)',
       )
       .eq('status', 'pending')
       .order('occurrence_date', { ascending: true })
@@ -1649,7 +1694,7 @@ function App() {
       return
     }
 
-    const pendingRows = data ?? []
+    const pendingRows = groupPendingTemplateConfirmations((data ?? []) as TemplateConfirmation[])
     if (pendingRows.length === 0) {
       setPendingTemplateConfirmations([])
       return
@@ -2380,23 +2425,29 @@ function App() {
   const startTemplateBookingDraft = ({
     template,
     templateId,
+    templateIds,
     memberId,
     occurrenceDate,
     confirmationId,
+    confirmationIds,
   }: {
     template: TemplateBooking
     templateId: string
+    templateIds?: string[]
     memberId: string
     occurrenceDate: string
     confirmationId?: string | null
+    confirmationIds?: string[]
   }) => {
     setError(null)
     setStatus(null)
     setTemplateBookingDraft({
       templateId,
+      templateIds,
       memberId,
       occurrenceDate,
       confirmationId,
+      confirmationIds,
     })
     setEditingTemplate(null)
     setEditingBooking(null)
@@ -2415,38 +2466,39 @@ function App() {
     }
 
     const respondedAt = new Date().toISOString()
-    const exceptionPayload = {
-      template_id: templateBookingDraft.templateId,
-      exception_date: templateBookingDraft.occurrenceDate,
-    }
-    const bookingId = bookingIds.length === 1 ? bookingIds[0] : null
+      const templateIds = templateBookingDraft.templateIds ?? [templateBookingDraft.templateId]
+      const exceptionPayload = templateIds.map((templateId) => ({
+        template_id: templateId,
+        exception_date: templateBookingDraft.occurrenceDate,
+      }))
+      const bookingId = bookingIds.length === 1 ? bookingIds[0] : null
 
-    const { error: exceptionError } = await supabase
-      .from('template_exceptions')
-      .upsert(exceptionPayload, { onConflict: 'template_id,exception_date' })
+      const { error: exceptionError } = await supabase
+        .from('template_exceptions')
+        .upsert(exceptionPayload, { onConflict: 'template_id,exception_date' })
 
     if (exceptionError) {
       throw new Error(exceptionError.message)
     }
 
-    const { error: updateError } = templateBookingDraft.confirmationId
-      ? await supabase
-          .from('template_confirmations')
-          .update({
-            status: 'confirmed',
-            booking_id: bookingId,
-            responded_at: respondedAt,
-          })
-          .eq('id', templateBookingDraft.confirmationId)
-      : await supabase.from('template_confirmations').upsert(
-          {
-            template_id: templateBookingDraft.templateId,
+      const { error: updateError } = templateBookingDraft.confirmationIds?.length
+        ? await supabase
+            .from('template_confirmations')
+            .update({
+              status: 'confirmed',
+              booking_id: bookingId,
+              responded_at: respondedAt,
+            })
+            .in('id', templateBookingDraft.confirmationIds)
+        : await supabase.from('template_confirmations').upsert(
+          templateIds.map((templateId) => ({
+            template_id: templateId,
             member_id: templateBookingDraft.memberId,
             occurrence_date: templateBookingDraft.occurrenceDate,
             status: 'confirmed',
             booking_id: bookingId,
             responded_at: respondedAt,
-          },
+          })),
           { onConflict: 'template_id,occurrence_date' },
         )
 
@@ -3496,14 +3548,17 @@ function App() {
       return
     }
 
-    const { data: exceptionRow, error: insertError } = await supabase
+    const templateIds = editingTemplate.template_ids ?? [editingTemplate.templateId]
+    const { data: exceptionRows, error: insertError } = await supabase
       .from('template_exceptions')
-      .insert({
-        template_id: editingTemplate.templateId,
-        exception_date: selectedDate,
-      })
+      .upsert(
+        templateIds.map((templateId) => ({
+          template_id: templateId,
+          exception_date: selectedDate,
+        })),
+        { onConflict: 'template_id,exception_date' },
+      )
       .select('id, template_id, exception_date')
-      .single()
 
     if (insertError) {
       setError(insertError.message)
@@ -3511,22 +3566,25 @@ function App() {
     }
 
     await supabase.from('template_confirmations').upsert(
-      {
-        template_id: editingTemplate.templateId,
+      templateIds.map((templateId) => ({
+        template_id: templateId,
         member_id: editingTemplate.member_id,
         occurrence_date: selectedDate,
         status: 'cancelled',
         responded_at: new Date().toISOString(),
-      },
+      })),
       { onConflict: 'template_id,occurrence_date' },
     )
 
-    const optimisticException = exceptionRow ?? {
-      id: `local-${editingTemplate.templateId}-${selectedDate}`,
-      template_id: editingTemplate.templateId,
-      exception_date: selectedDate,
-    }
-    setTemplateExceptions((prev) => [...prev, optimisticException])
+    const optimisticExceptions =
+      exceptionRows && exceptionRows.length > 0
+        ? exceptionRows
+        : templateIds.map((templateId) => ({
+            id: `local-${templateId}-${selectedDate}`,
+            template_id: templateId,
+            exception_date: selectedDate,
+          }))
+    setTemplateExceptions((prev) => [...prev, ...optimisticExceptions])
     setTemplateBookings((prev) =>
       prev.filter(
         (template) =>
@@ -3586,35 +3644,32 @@ function App() {
 
   const resolveTemplateOccurrence = useCallback(
     async ({
-      confirmationId,
+      confirmationIds,
       template,
-      templateId,
+      templateIds,
       memberId,
       occurrenceDate,
       nextStatus,
     }: {
-      confirmationId?: string | null
+      confirmationIds?: string[]
       template: TemplateBooking
-      templateId: string
+      templateIds: string[]
       memberId: string
       occurrenceDate: string
       nextStatus: 'confirmed' | 'cancelled'
     }) => {
-      const exceptionPayload = {
-        template_id: templateId,
-        exception_date: occurrenceDate,
-      }
-
       let insertedBookingId: string | null = null
 
       if (nextStatus === 'confirmed') {
-        if (!template.boat_id) {
+        const templateBoatIds = template.boat_ids ?? (template.boat_id ? [template.boat_id] : [])
+        if (templateBoatIds.length === 0) {
           throw new Error('This template has no boat assigned. Add a boat before confirming it.')
         }
 
-        const raceEventConflictBoatIds = await fetchRaceEventConflictingBoatIds(occurrenceDate, [
-          template.boat_id,
-        ])
+        const raceEventConflictBoatIds = await fetchRaceEventConflictingBoatIds(
+          occurrenceDate,
+          templateBoatIds,
+        )
         if (raceEventConflictBoatIds.length > 0) {
           throw new Error('This boat is unavailable because it is assigned to a race event.')
         }
@@ -3626,8 +3681,8 @@ function App() {
 
         const { data: conflicts, error: conflictError } = await supabase
           .from('bookings')
-          .select('id')
-          .eq('boat_id', template.boat_id)
+          .select('id, boat_id')
+          .in('boat_id', templateBoatIds)
           .lt('start_time', bookingEnd.toISOString())
           .gt('end_time', bookingStart.toISOString())
 
@@ -3639,34 +3694,43 @@ function App() {
           throw new Error('A booking already exists for this boat during that time.')
         }
 
-        const { data: insertedBooking, error: insertBookingError } = await supabase
+        const bookingGroupId = crypto.randomUUID()
+        const { data: insertedBookings, error: insertBookingError } = await supabase
           .from('bookings')
-          .insert({
-            boat_id: template.boat_id,
-            member_id: memberId,
-            start_time: bookingStart.toISOString(),
-            end_time: bookingEnd.toISOString(),
-          })
+          .insert(
+            templateBoatIds.map((boatId) => ({
+              booking_group_id: bookingGroupId,
+              boat_id: boatId,
+              member_id: memberId,
+              start_time: bookingStart.toISOString(),
+              end_time: bookingEnd.toISOString(),
+            })),
+          )
           .select('id')
-          .single()
 
         if (insertBookingError) {
           throw new Error(insertBookingError.message)
         }
 
-        insertedBookingId = insertedBooking.id
+        insertedBookingId = insertedBookings?.[0]?.id ?? null
       }
 
-      const { error: exceptionError } = await supabase
-        .from('template_exceptions')
-        .upsert(exceptionPayload, { onConflict: 'template_id,exception_date' })
+      const exceptionPayloads = templateIds.map((templateId) => ({
+        template_id: templateId,
+        exception_date: occurrenceDate,
+      }))
+      if (exceptionPayloads.length > 0) {
+        const { error: exceptionError } = await supabase
+          .from('template_exceptions')
+          .upsert(exceptionPayloads, { onConflict: 'template_id,exception_date' })
 
-      if (exceptionError) {
-        throw new Error(exceptionError.message)
+        if (exceptionError) {
+          throw new Error(exceptionError.message)
+        }
       }
 
       const respondedAt = new Date().toISOString()
-      const { error: updateError } = confirmationId
+      const { error: updateError } = confirmationIds && confirmationIds.length > 0
         ? await supabase
             .from('template_confirmations')
             .update({
@@ -3674,16 +3738,16 @@ function App() {
               booking_id: insertedBookingId,
               responded_at: respondedAt,
             })
-            .eq('id', confirmationId)
+            .in('id', confirmationIds)
         : await supabase.from('template_confirmations').upsert(
-            {
+            templateIds.map((templateId) => ({
               template_id: templateId,
               member_id: memberId,
               occurrence_date: occurrenceDate,
               status: nextStatus,
               booking_id: insertedBookingId,
               responded_at: respondedAt,
-            },
+            })),
             { onConflict: 'template_id,occurrence_date' },
           )
 
@@ -3737,9 +3801,11 @@ function App() {
       startTemplateBookingDraft({
         template,
         templateId: confirmation.template_id,
+        templateIds: confirmation.template_ids ?? [confirmation.template_id],
         memberId: confirmation.member_id,
         occurrenceDate: confirmation.occurrence_date,
         confirmationId: confirmation.id,
+        confirmationIds: confirmation.confirmation_ids ?? [confirmation.id],
       })
       setPendingTemplateActionId(null)
       return
@@ -3747,9 +3813,9 @@ function App() {
 
     try {
       await resolveTemplateOccurrence({
-        confirmationId: confirmation.id,
+        confirmationIds: confirmation.confirmation_ids ?? [confirmation.id],
         template,
-        templateId: confirmation.template_id,
+        templateIds: confirmation.template_ids ?? [confirmation.template_id],
         memberId: confirmation.member_id,
         occurrenceDate: confirmation.occurrence_date,
         nextStatus,
@@ -3786,6 +3852,7 @@ function App() {
       startTemplateBookingDraft({
         template,
         templateId: editingTemplate.templateId,
+        templateIds: editingTemplate.template_ids ?? [editingTemplate.templateId],
         memberId: editingTemplate.member_id,
         occurrenceDate: selectedDate,
       })
@@ -3799,7 +3866,7 @@ function App() {
     try {
       await resolveTemplateOccurrence({
         template,
-        templateId: editingTemplate.templateId,
+        templateIds: editingTemplate.template_ids ?? [editingTemplate.templateId],
         memberId: editingTemplate.member_id,
         occurrenceDate: selectedDate,
         nextStatus: 'confirmed',

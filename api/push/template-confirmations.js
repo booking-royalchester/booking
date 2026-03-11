@@ -55,6 +55,7 @@ const formatOccurrenceLabel = (date, time) => {
 }
 
 const buildKey = (templateId, occurrenceDate) => `${templateId}:${occurrenceDate}`
+const buildGroupKey = (groupId, occurrenceDate) => `${groupId}:${occurrenceDate}`
 
 export default async function handler(req, res) {
   const secret = process.env.CRON_SECRET
@@ -89,7 +90,7 @@ export default async function handler(req, res) {
   const { data: templates, error: templatesError } = await supabaseAdmin
     .from('booking_templates')
     .select(
-      'id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
+      'id, template_group_id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
     )
     .not('member_id', 'is', null)
 
@@ -124,14 +125,39 @@ export default async function handler(req, res) {
   const confirmationMap = new Map(
     (confirmations ?? []).map((row) => [buildKey(row.template_id, row.occurrence_date), row]),
   )
+  const templateGroups = new Map()
+
+  for (const template of templates ?? []) {
+    const groupId = template.template_group_id ?? template.id
+    const existing = templateGroups.get(groupId)
+    if (!existing) {
+      templateGroups.set(groupId, {
+        id: groupId,
+        member_id: template.member_id,
+        weekday: template.weekday,
+        start_time: template.start_time,
+        end_time: template.end_time,
+        boat_label: template.boat_label,
+        template_ids: [template.id],
+        boats: template.boats ? [template.boats] : [],
+        representative_template_id: template.id,
+      })
+      continue
+    }
+
+    existing.template_ids.push(template.id)
+    if (template.boats) {
+      existing.boats.push(template.boats)
+    }
+  }
 
   let pendingCreated = 0
   let remindersSent = 0
   let autoRemoved = 0
   let removalNoticesSent = 0
 
-  for (const template of templates ?? []) {
-    if (!template.member_id) {
+  for (const templateGroup of templateGroups.values()) {
+    if (!templateGroup.member_id) {
       continue
     }
 
@@ -139,20 +165,47 @@ export default async function handler(req, res) {
 
     for (const occurrenceDate of datesToCheck) {
       const weekday = DateTime.fromISO(occurrenceDate, { zone: 'Europe/London' }).weekday % 7
-      if (weekday !== template.weekday) {
+      if (weekday !== templateGroup.weekday) {
         continue
       }
 
-      const key = buildKey(template.id, occurrenceDate)
-      if (exceptionSet.has(key)) {
+      const groupKey = buildGroupKey(templateGroup.id, occurrenceDate)
+      const groupTemplateIds = templateGroup.template_ids
+      const groupExceptions = groupTemplateIds.filter((templateId) =>
+        exceptionSet.has(buildKey(templateId, occurrenceDate)),
+      )
+      if (groupExceptions.length === groupTemplateIds.length) {
         continue
       }
 
-      const boatName = template.boats?.name || template.boat_label || 'Boat'
-      const existingConfirmation = confirmationMap.get(key) ?? null
+      const boatName =
+        templateGroup.boat_label ||
+        templateGroup.boats
+          .map((boat) => {
+            if (!boat) {
+              return null
+            }
+            const parts = boat.name.trim().split(/\s+/).filter(Boolean)
+            const shortName =
+              parts.length <= 1 ? boat.name : `${parts[0]?.charAt(0) ?? ''}. ${parts.slice(1).join(' ')}`
+            return boat.type ? `${boat.type} ${shortName}` : shortName
+          })
+          .filter(Boolean)
+          .join(', ') ||
+        'Boat'
+      const existingGroupConfirmations = groupTemplateIds
+        .map((templateId) => confirmationMap.get(buildKey(templateId, occurrenceDate)) ?? null)
+        .filter(Boolean)
+      const existingConfirmation =
+        existingGroupConfirmations.find(
+          (row) => row.template_id === templateGroup.representative_template_id,
+        ) ??
+        existingGroupConfirmations[0] ??
+        null
+      const existingStatus = existingGroupConfirmations.find((row) => row.status !== 'pending')?.status ?? 'pending'
 
       if (occurrenceDate === notificationDate) {
-        if (existingConfirmation?.status === 'confirmed' || existingConfirmation?.status === 'cancelled') {
+        if (existingStatus === 'confirmed' || existingStatus === 'cancelled') {
           continue
         }
 
@@ -162,8 +215,8 @@ export default async function handler(req, res) {
             .from('template_confirmations')
             .upsert(
               {
-                template_id: template.id,
-                member_id: template.member_id,
+                template_id: templateGroup.representative_template_id,
+                member_id: templateGroup.member_id,
                 occurrence_date: occurrenceDate,
                 status: 'pending',
               },
@@ -178,14 +231,17 @@ export default async function handler(req, res) {
           }
 
           confirmation = insertedConfirmation
-          confirmationMap.set(key, insertedConfirmation)
+          confirmationMap.set(
+            buildKey(templateGroup.representative_template_id, occurrenceDate),
+            insertedConfirmation,
+          )
           pendingCreated += 1
         }
 
         if (!confirmation.notified_at) {
-          const delivered = await sendToMember(template.member_id, {
+          const delivered = await sendToMember(templateGroup.member_id, {
             title: 'Template booking needs confirmation',
-            body: `${boatName} on ${formatOccurrenceLabel(occurrenceDate, template.start_time)} needs to be confirmed.`,
+            body: `${boatName} on ${formatOccurrenceLabel(occurrenceDate, templateGroup.start_time)} needs to be confirmed.`,
             url: '/',
           })
 
@@ -204,13 +260,16 @@ export default async function handler(req, res) {
             return
           }
 
-          confirmationMap.set(key, { ...confirmation, notified_at: notifiedAt })
+          confirmationMap.set(buildKey(confirmation.template_id, occurrenceDate), {
+            ...confirmation,
+            notified_at: notifiedAt,
+          })
         }
 
         continue
       }
 
-      if (existingConfirmation?.status === 'confirmed') {
+      if (existingStatus === 'confirmed') {
         continue
       }
 
@@ -218,10 +277,10 @@ export default async function handler(req, res) {
       const { error: exceptionError } = await supabaseAdmin
         .from('template_exceptions')
         .upsert(
-          {
-            template_id: template.id,
+          groupTemplateIds.map((templateId) => ({
+            template_id: templateId,
             exception_date: occurrenceDate,
-          },
+          })),
           { onConflict: 'template_id,exception_date' },
         )
 
@@ -230,35 +289,64 @@ export default async function handler(req, res) {
         return
       }
 
-      exceptionSet.add(key)
+      groupTemplateIds.forEach((templateId) => exceptionSet.add(buildKey(templateId, occurrenceDate)))
       autoRemoved += 1
 
-      const { data: cancelledConfirmation, error: cancelError } = await supabaseAdmin
-        .from('template_confirmations')
-        .upsert(
-          {
-            template_id: template.id,
-            member_id: template.member_id,
-            occurrence_date: occurrenceDate,
+      if (existingGroupConfirmations.length > 0) {
+        const { error: cancelError } = await supabaseAdmin
+          .from('template_confirmations')
+          .update({
             status: 'cancelled',
             responded_at: respondedAt,
-          },
-          { onConflict: 'template_id,occurrence_date' },
-        )
-        .select('id, template_id, occurrence_date, member_id, status, booking_id, notified_at')
-        .single()
+          })
+          .in(
+            'id',
+            existingGroupConfirmations.map((row) => row.id),
+          )
 
-      if (cancelError) {
-        res.status(500).json({ error: cancelError.message })
-        return
+        if (cancelError) {
+          res.status(500).json({ error: cancelError.message })
+          return
+        }
+
+        existingGroupConfirmations.forEach((row) => {
+          confirmationMap.set(buildKey(row.template_id, occurrenceDate), {
+            ...row,
+            status: 'cancelled',
+            responded_at: respondedAt,
+          })
+        })
+      } else {
+        const { data: cancelledConfirmation, error: cancelError } = await supabaseAdmin
+          .from('template_confirmations')
+          .upsert(
+            {
+              template_id: templateGroup.representative_template_id,
+              member_id: templateGroup.member_id,
+              occurrence_date: occurrenceDate,
+              status: 'cancelled',
+              responded_at: respondedAt,
+            },
+            { onConflict: 'template_id,occurrence_date' },
+          )
+          .select('id, template_id, occurrence_date, member_id, status, booking_id, notified_at')
+          .single()
+
+        if (cancelError) {
+          res.status(500).json({ error: cancelError.message })
+          return
+        }
+
+        confirmationMap.set(
+          buildKey(templateGroup.representative_template_id, occurrenceDate),
+          cancelledConfirmation,
+        )
       }
 
-      confirmationMap.set(key, cancelledConfirmation)
-
-      if (existingConfirmation?.status !== 'cancelled') {
-        const delivered = await sendToMember(template.member_id, {
+      if (existingStatus !== 'cancelled') {
+        const delivered = await sendToMember(templateGroup.member_id, {
           title: 'Template booking removed',
-          body: `${boatName} on ${formatOccurrenceLabel(occurrenceDate, template.start_time)} was removed because it was not confirmed in time.`,
+          body: `${boatName} on ${formatOccurrenceLabel(occurrenceDate, templateGroup.start_time)} was removed because it was not confirmed in time.`,
           url: '/',
         })
 
