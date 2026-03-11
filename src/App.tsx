@@ -2060,6 +2060,9 @@ function App() {
         return {
           id: `template-${template.id}`,
           templateId: template.id,
+          template_group_id: template.template_group_id ?? template.id,
+          template_ids: template.template_ids ?? [template.id],
+          boat_ids: template.boat_ids ?? (template.boat_id ? [template.boat_id] : []),
           boat_id: template.boat_id,
           member_id: template.member_id,
           start_time: baseDate.toISOString(),
@@ -2182,6 +2185,9 @@ function App() {
           return {
             id: `template-${template.id}-${dayDate}`,
             templateId: template.id,
+            template_group_id: template.template_group_id ?? template.id,
+            template_ids: template.template_ids ?? [template.id],
+            boat_ids: template.boat_ids ?? (template.boat_id ? [template.boat_id] : []),
             boat_id: template.boat_id,
             member_id: template.member_id,
             start_time: new Date(`${dayDate}T${startTime}:00`).toISOString(),
@@ -2351,6 +2357,24 @@ function App() {
     }
     setStartTime('07:30')
     setEndTime('08:30')
+  }
+
+  const reloadTemplateWeekday = async (weekday: number) => {
+    const { data, error } = await supabase
+      .from('booking_templates')
+      .select(
+        'id, template_group_id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
+      )
+      .eq('weekday', weekday)
+      .order('start_time', { ascending: true })
+
+    if (error) {
+      setError(error.message)
+      return false
+    }
+
+    setTemplateBookings(groupTemplates((data ?? []) as TemplateBooking[]))
+    return true
   }
 
   const startTemplateBookingDraft = ({
@@ -3023,21 +3047,7 @@ function App() {
     }
 
     resetBookingForm()
-
-    const { data, error } = await supabase
-      .from('booking_templates')
-      .select(
-        'id, template_group_id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
-      )
-      .eq('weekday', selectedTemplateWeekday)
-      .order('start_time', { ascending: true })
-
-    if (error) {
-      setError(error.message)
-      return
-    }
-
-    setTemplateBookings(groupTemplates((data ?? []) as TemplateBooking[]))
+    await reloadTemplateWeekday(selectedTemplateWeekday)
   }
 
   const handleDeleteTemplateRow = async () => {
@@ -3064,14 +3074,8 @@ function App() {
       return
     }
 
-    setTemplateBookings((prev) =>
-      prev.filter(
-        (item) =>
-          (editingTemplate.template_group_id ?? editingTemplate.templateId) !==
-          (item.template_group_id ?? item.id),
-      ),
-    )
     setStatus('Template booking removed')
+    await reloadTemplateWeekday(selectedTemplateWeekday)
     resetBookingForm()
   }
 
@@ -5163,11 +5167,9 @@ function App() {
                             <h3>Template bookings to confirm</h3>
                             {pendingTemplateConfirmations.map((confirmation) => {
                               const template = normalizeTemplateBooking(confirmation.booking_templates)
-                              const boatName =
-                                getRelatedName(template?.boats) ??
-                                template?.boat_label ??
-                                'Boat'
-                              const boatType = getRelatedType(template?.boats)
+                              const boatName = template
+                                ? getBookingBoatDisplay(template)
+                                : 'Boat'
                               const memberName =
                                 getRelatedName(confirmation.members) ??
                                 getRelatedName(template?.members) ??
@@ -5179,10 +5181,7 @@ function App() {
                                   className="template-summary pending-confirmation-card"
                                 >
                                   <div className="template-info">
-                                    <strong>
-                                      {boatType ? `${boatType} ` : ''}
-                                      {boatName}
-                                    </strong>
+                                    <strong>{boatName}</strong>
                                     <span>{formatDayLabel(confirmation.occurrence_date)}</span>
                                     <span>
                                       {template
@@ -6280,14 +6279,7 @@ function App() {
               <>
                 <div className="template-summary">
                   <div className="template-info">
-                    <strong>
-                      {getRelatedType(editingTemplate.boats)
-                        ? `${getRelatedType(editingTemplate.boats)} `
-                        : ''}
-                      {getRelatedName(editingTemplate.boats) ??
-                        editingTemplate.boat_label ??
-                        'Boat'}
-                    </strong>
+                    <strong>{getBookingBoatDisplay(editingTemplate)}</strong>
                     <span>
                       {getRelatedName(editingTemplate.members) ??
                         editingTemplate.member_label ??
