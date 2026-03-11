@@ -245,6 +245,9 @@ type ScheduleItem = {
   isTemplate: boolean
   pendingApproval?: boolean
   captainRequestId?: string
+  template_group_id?: string | null
+  template_ids?: string[]
+  boat_ids?: string[]
   boat_label?: string | null
   member_label?: string | null
   templateId?: string
@@ -676,7 +679,6 @@ function App() {
   const [showNewBooking, setShowNewBooking] = useState(false)
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null)
   const [editingTemplate, setEditingTemplate] = useState<ScheduleItem | null>(null)
-  const [bookingBoatId, setBookingBoatId] = useState('')
   const [bookingBoatIds, setBookingBoatIds] = useState<string[]>([])
   const [boatSearch, setBoatSearch] = useState('')
   const [startTime, setStartTime] = useState('07:30')
@@ -2294,7 +2296,6 @@ function App() {
         setEditingTemplate(item)
         setEditingBooking(null)
         setShowNewBooking(false)
-        setBookingBoatId(item.boat_id ?? '')
         setBookingBoatIds(item.boat_ids ?? (item.boat_id ? [item.boat_id] : []))
         setBoatSearch('')
         setBookingMemberId(item.member_id ?? '')
@@ -2314,7 +2315,6 @@ function App() {
     setEditingBooking(booking)
     setEditingTemplate(null)
     setShowNewBooking(false)
-    setBookingBoatId(booking.boat_id ?? '')
     setBookingBoatIds(booking.boat_ids ?? (booking.boat_id ? [booking.boat_id] : []))
     setBoatSearch('')
     setBookingMemberId(booking.member_id ?? '')
@@ -2342,7 +2342,6 @@ function App() {
     setEditingBooking(null)
     setEditingTemplate(null)
     setTemplateBookingDraft(null)
-    setBookingBoatId('')
     setBookingBoatIds([])
     setBoatSearch('')
     if (currentMember && !isAdmin && viewMode === 'schedule') {
@@ -2379,7 +2378,6 @@ function App() {
     setEditingBooking(null)
     setShowNewBooking(true)
     setSelectedDate(occurrenceDate)
-    setBookingBoatId('')
     setBookingBoatIds([])
     setBoatSearch('')
     setBookingMemberId(memberId)
@@ -6225,7 +6223,6 @@ function App() {
                 setShowNewBooking(true)
                 refreshBoatAccess()
                 if (viewMode === 'templates') {
-                  setBookingBoatId('')
                   setBookingBoatIds([])
                   setBookingMemberId('')
                   setStartTime('07:30')
