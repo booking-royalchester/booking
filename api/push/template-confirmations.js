@@ -54,6 +54,28 @@ const formatOccurrenceLabel = (date, time) => {
   return `${dateTime.toFormat('ccc d LLL')} at ${dateTime.toFormat('HH:mm')}`
 }
 
+const getTemplateSeasonForDate = (date) => {
+  const dateTime = DateTime.fromISO(date, { zone: 'Europe/London' }).set({ hour: 12 })
+  return dateTime.isInDST ? 'summer time' : 'winter time'
+}
+
+const getOppositeTemplateSeason = (season) =>
+  season === 'summer time' ? 'winter time' : 'summer time'
+
+const getConfiguredTemplateSeasonForDate = (date, nextSwitchDate) => {
+  const fallbackSeason = getTemplateSeasonForDate(date)
+  if (!nextSwitchDate) {
+    return fallbackSeason
+  }
+
+  const today = DateTime.now().setZone('Europe/London').toISODate()
+  const activeTodaySeason = getTemplateSeasonForDate(today)
+  if (today < nextSwitchDate) {
+    return date < nextSwitchDate ? activeTodaySeason : getOppositeTemplateSeason(activeTodaySeason)
+  }
+  return date < nextSwitchDate ? getOppositeTemplateSeason(activeTodaySeason) : activeTodaySeason
+}
+
 const buildKey = (templateId, occurrenceDate) => `${templateId}:${occurrenceDate}`
 const buildGroupKey = (groupId, occurrenceDate) => `${groupId}:${occurrenceDate}`
 
@@ -87,10 +109,23 @@ export default async function handler(req, res) {
   ]
   const relevantDates = [notificationDate, ...autoCancelDates]
 
+  const { data: seasonSettings, error: seasonSettingsError } = await supabaseAdmin
+    .from('template_season_settings')
+    .select('next_switch_date')
+    .eq('id', 1)
+    .maybeSingle()
+
+  if (seasonSettingsError) {
+    res.status(500).json({ error: seasonSettingsError.message })
+    return
+  }
+
+  const nextSwitchDate = seasonSettings?.next_switch_date ?? null
+
   const { data: templates, error: templatesError } = await supabaseAdmin
     .from('booking_templates')
     .select(
-      'id, template_group_id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
+      'id, template_group_id, boat_id, member_id, season, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
     )
     .not('member_id', 'is', null)
 
@@ -134,6 +169,7 @@ export default async function handler(req, res) {
       templateGroups.set(groupId, {
         id: groupId,
         member_id: template.member_id,
+        season: template.season ?? 'winter time',
         weekday: template.weekday,
         start_time: template.start_time,
         end_time: template.end_time,
@@ -166,6 +202,12 @@ export default async function handler(req, res) {
     for (const occurrenceDate of datesToCheck) {
       const weekday = DateTime.fromISO(occurrenceDate, { zone: 'Europe/London' }).weekday % 7
       if (weekday !== templateGroup.weekday) {
+        continue
+      }
+      if (
+        (templateGroup.season ?? 'winter time') !==
+        getConfiguredTemplateSeasonForDate(occurrenceDate, nextSwitchDate)
+      ) {
         continue
       }
 

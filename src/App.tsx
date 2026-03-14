@@ -59,6 +59,10 @@ const INCOMING_TIDE_OPTIONS = ['Yes', 'No']
 const LOADIN_PLAN_ROWS = 3
 const LOADIN_PLAN_COLUMNS = 3
 const LOADIN_PLAN_BLOCKED_CELL = `${LOADIN_PLAN_ROWS - 1}-${Math.floor(LOADIN_PLAN_COLUMNS / 2)}`
+const TEMPLATE_WEEKDAY_ORDER = [6, 0, 1, 2, 3, 4, 5]
+const TEMPLATE_SEASON_OPTIONS = ['summer time', 'winter time'] as const
+
+type TemplateSeason = (typeof TEMPLATE_SEASON_OPTIONS)[number]
 
 type Member = {
   id: string
@@ -99,6 +103,7 @@ type TemplateBooking = {
   template_group_id?: string | null
   boat_id: string | null
   member_id: string | null
+  season?: TemplateSeason | null
   weekday: number
   start_time: string
   end_time: string
@@ -114,6 +119,11 @@ type TemplateException = {
   id: string
   template_id: string
   exception_date: string
+}
+
+type TemplateSeasonSettings = {
+  id: number
+  next_switch_date: string | null
 }
 
 type TemplateConfirmation = {
@@ -253,6 +263,7 @@ type ScheduleItem = {
   boat_label?: string | null
   member_label?: string | null
   templateId?: string
+  season?: TemplateSeason | null
   weekday?: number
   boats?: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null
   members?: { name: string } | { name: string }[] | null
@@ -438,6 +449,75 @@ const addMinutesToTime = (value: string, minutesToAdd: number) => {
   const nextMinutes = totalMinutes % 60
   return `${String(nextHours).padStart(2, '0')}:${String(nextMinutes).padStart(2, '0')}`
 }
+
+const getDefaultBookingTimes = (date: string) => {
+  const fallbackStart = '07:30'
+  if (date !== getTodayString()) {
+    return {
+      startTime: fallbackStart,
+      endTime: addMinutesToTime(fallbackStart, 90),
+    }
+  }
+
+  const now = new Date()
+  const nextHour = new Date(now)
+  nextHour.setMinutes(0, 0, 0)
+  nextHour.setHours(nextHour.getHours() + 1)
+  const roundedStart = `${String(nextHour.getHours()).padStart(2, '0')}:${String(
+    nextHour.getMinutes(),
+  ).padStart(2, '0')}`
+  const startTime = roundedStart < fallbackStart ? fallbackStart : roundedStart
+
+  return {
+    startTime,
+    endTime: addMinutesToTime(startTime, 90),
+  }
+}
+
+const getWeekdayLabel = (weekday: number) => {
+  const labels: Record<number, string> = {
+    0: 'Sunday',
+    1: 'Monday',
+    2: 'Tuesday',
+    3: 'Wednesday',
+    4: 'Thursday',
+    5: 'Friday',
+    6: 'Saturday',
+  }
+  return labels[weekday] ?? 'Unknown'
+}
+
+const getLastSunday = (year: number, monthIndex: number) => {
+  const date = new Date(Date.UTC(year, monthIndex + 1, 0))
+  while (date.getUTCDay() !== 0) {
+    date.setUTCDate(date.getUTCDate() - 1)
+  }
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(
+    date.getUTCDate(),
+  ).padStart(2, '0')}`
+}
+
+const getTemplateSeasonForDate = (date: string): TemplateSeason => {
+  const year = Number(date.slice(0, 4))
+  if (Number.isNaN(year)) {
+    return 'winter time'
+  }
+  const summerStart = getLastSunday(year, 2)
+  const winterStart = getLastSunday(year, 9)
+  if (date >= summerStart && date < winterStart) {
+    return 'summer time'
+  }
+  return 'winter time'
+}
+
+const getTemplateSeasonLabel = (season: TemplateSeason) =>
+  season === 'summer time' ? 'Summer time' : 'Winter time'
+
+const getOppositeTemplateSeason = (season: TemplateSeason): TemplateSeason =>
+  season === 'summer time' ? 'winter time' : 'summer time'
+
+const isGeneralUseBoat = (boat: Boat | undefined) =>
+  (boat?.usage_type ?? '').trim().toLowerCase() === 'general use'
 
 const canOpenRiskAssessment = (booking: Booking) => {
   const bookingStart = new Date(booking.start_time).getTime()
@@ -696,6 +776,9 @@ function App() {
   const [selectedCaptainApprovalRequest, setSelectedCaptainApprovalRequest] =
     useState<CaptainBookingRequest | null>(null)
   const [templateBookings, setTemplateBookings] = useState<TemplateBooking[]>([])
+  const [templateSeasonSettings, setTemplateSeasonSettings] = useState<TemplateSeasonSettings | null>(
+    null,
+  )
   const [templateExceptions, setTemplateExceptions] = useState<TemplateException[]>([])
   const [boatPermissions, setBoatPermissions] = useState<Record<string, Record<string, string | null>>>({})
   const [bookingMemberId, setBookingMemberId] = useState('')
@@ -718,6 +801,10 @@ function App() {
   const [selectedTemplateWeekday, setSelectedTemplateWeekday] = useState(
     getWeekdayIndex(getTodayString()),
   )
+  const [selectedTemplateSeason, setSelectedTemplateSeason] = useState<TemplateSeason>(
+    getTemplateSeasonForDate(getTodayString()),
+  )
+  const [templateSwitchDate, setTemplateSwitchDate] = useState('')
   const [scheduleDisplayMode, setScheduleDisplayMode] = useState<'gantt' | 'list'>('gantt')
   const [boatTypeFilter, setBoatTypeFilter] = useState('')
   const [viewMode, setViewMode] = useState<
@@ -828,6 +915,30 @@ function App() {
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+
+  const getConfiguredTemplateSeasonForDate = useCallback(
+    (date: string) => {
+      const fallbackSeason = getTemplateSeasonForDate(date)
+      const switchDate = templateSeasonSettings?.next_switch_date
+      if (!switchDate) {
+        return fallbackSeason
+      }
+
+      const today = getTodayString()
+      const activeTodaySeason = getTemplateSeasonForDate(today)
+      if (today < switchDate) {
+        return date < switchDate ? activeTodaySeason : getOppositeTemplateSeason(activeTodaySeason)
+      }
+      return date < switchDate ? getOppositeTemplateSeason(activeTodaySeason) : activeTodaySeason
+    },
+    [templateSeasonSettings],
+  )
+
+  const activeTemplateSeasonToday = useMemo(
+    () => getConfiguredTemplateSeasonForDate(getTodayString()),
+    [getConfiguredTemplateSeasonForDate],
+  )
+
   const isCoordinator = userRole === 'coordinator'
   const isCaptain = userRole === 'captain'
   const isGuest = userRole === 'guest'
@@ -1692,7 +1803,7 @@ function App() {
     let query = supabase
       .from('template_confirmations')
       .select(
-        'id, template_id, member_id, occurrence_date, status, booking_id, notified_at, responded_at, booking_templates(id, template_group_id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name,email)), members(name,email)',
+        'id, template_id, member_id, occurrence_date, status, booking_id, notified_at, responded_at, booking_templates(id, template_group_id, boat_id, member_id, season, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name,email)), members(name,email)',
       )
       .eq('status', 'pending')
       .order('occurrence_date', { ascending: true })
@@ -1773,23 +1884,7 @@ function App() {
     return boats.filter((boat) => (boat.type ?? '').startsWith(boatTypeFilter))
   }, [boats, boatTypeFilter])
 
-  const allowedBoats = useMemo(() => {
-    const memberId = currentMember?.id
-    if (!memberId && !isAdmin) {
-      return []
-    }
-    return boats.filter((boat) => {
-      const usage = (boat.usage_type ?? '').toLowerCase()
-      if (usage === 'restricted') {
-        return false
-      }
-      return true
-    })
-  }, [boats, currentMember, isAdmin])
-
-  const bookingBoatsSource = useMemo(() => {
-    return isAdmin || isCaptain ? boats : allowedBoats
-  }, [allowedBoats, boats, isAdmin, isCaptain])
+  const bookingBoatsSource = useMemo(() => boats, [boats])
 
   const filteredBookingBoats = useMemo(() => {
     if (!boatSearch) {
@@ -1802,6 +1897,20 @@ function App() {
       return name.includes(query) || type.includes(query)
     })
   }, [boatSearch, bookingBoatsSource])
+
+  const shouldMarkBoatAsCaptainApproval = useCallback(
+    (boat: Boat) => {
+      if (isAdmin || isCaptain) {
+        return false
+      }
+      if (isGeneralUseBoat(boat)) {
+        return false
+      }
+      const memberId = currentMember?.id
+      return !hasActiveCaptainPermission(boat.id, memberId, selectedDate)
+    },
+    [currentMember, isAdmin, isCaptain, selectedDate],
+  )
 
   const boatTypeOptions = ['1', '2', '4', '8']
 
@@ -1846,6 +1955,12 @@ function App() {
   useEffect(() => {
     fetchBoatPermissions()
   }, [fetchBoatPermissions])
+
+  useEffect(() => {
+    if (viewMode === 'templates') {
+      setSelectedTemplateSeason(activeTemplateSeasonToday)
+    }
+  }, [activeTemplateSeasonToday, viewMode])
 
   useEffect(() => {
     if (viewMode === 'access' && canManageAccess) {
@@ -1975,7 +2090,7 @@ function App() {
       const templatesQuery = supabase
         .from('booking_templates')
         .select(
-          'id, template_group_id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
+          'id, template_group_id, boat_id, member_id, season, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
         )
         .order('weekday', { ascending: true })
         .order('start_time', { ascending: true })
@@ -2076,9 +2191,9 @@ function App() {
       const { data, error } = await supabase
         .from('booking_templates')
         .select(
-          'id, template_group_id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
+          'id, template_group_id, boat_id, member_id, season, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
         )
-        .eq('weekday', selectedTemplateWeekday)
+        .order('weekday', { ascending: true })
         .order('start_time', { ascending: true })
       setIsLoading(false)
 
@@ -2091,7 +2206,7 @@ function App() {
     }
 
     loadTemplates()
-  }, [selectedTemplateWeekday, session, viewMode])
+  }, [session, viewMode])
 
   const scheduleItems = useMemo<ScheduleItem[]>(() => {
     const excludedTemplateIds = new Set(
@@ -2235,6 +2350,10 @@ function App() {
 
       const templateItems: ScheduleItem[] = templateBookings
         .filter((template) => template.weekday === weekday)
+        .filter(
+          (template) =>
+            (template.season ?? 'winter time') === getConfiguredTemplateSeasonForDate(dayDate),
+        )
         .filter((template) => !exceptionKeySet.has(`${template.id}:${dayDate}`))
         .filter(() => dayDate >= today)
         .map((template) => {
@@ -2254,6 +2373,7 @@ function App() {
             members: template.members ?? null,
             boat_label: template.boat_label ?? null,
             member_label: template.member_label ?? null,
+            season: template.season ?? 'winter time',
             weekday: template.weekday,
             isTemplate: true,
           }
@@ -2276,6 +2396,7 @@ function App() {
     return groups
   }, [
     bookings,
+    getConfiguredTemplateSeasonForDate,
     pendingApprovalScheduleItems,
     selectedDate,
     templateBookings,
@@ -2328,6 +2449,98 @@ function App() {
     })
   }, [scheduleDayGroups, viewMode])
 
+  const templateWeekGroups = useMemo(() => {
+    if (viewMode !== 'templates') {
+      return [] as { weekday: number; label: string; items: ScheduleItem[] }[]
+    }
+
+    return TEMPLATE_WEEKDAY_ORDER.map((weekday) => {
+      const items: ScheduleItem[] = templateBookings
+        .filter((template) => (template.season ?? 'winter time') === selectedTemplateSeason)
+        .filter((template) => template.weekday === weekday)
+        .map((template) => {
+          const startTime = normalizeTime(template.start_time)
+          const endTime = normalizeTime(template.end_time)
+          return {
+            id: `template-${template.id}-${weekday}`,
+            templateId: template.id,
+            template_group_id: template.template_group_id ?? template.id,
+            template_ids: template.template_ids ?? [template.id],
+            boat_ids: template.boat_ids ?? (template.boat_id ? [template.boat_id] : []),
+            boat_id: template.boat_id,
+            member_id: template.member_id,
+            start_time: new Date(`2000-01-01T${startTime}:00`).toISOString(),
+            end_time: new Date(`2000-01-01T${endTime}:00`).toISOString(),
+            boats: template.boats ?? null,
+            members: template.members ?? null,
+            boat_label: template.boat_label ?? null,
+            member_label: template.member_label ?? null,
+            season: template.season ?? 'winter time',
+            weekday: template.weekday,
+            isTemplate: true,
+          }
+        })
+        .sort(
+          (a, b) =>
+            new Date(a.start_time).getTime() - new Date(b.start_time).getTime() ||
+            new Date(a.end_time).getTime() - new Date(b.end_time).getTime(),
+        )
+
+      return {
+        weekday,
+        label: getWeekdayLabel(weekday),
+        items,
+      }
+    })
+  }, [selectedTemplateSeason, templateBookings, viewMode])
+
+  const templateWeekGanttGroups = useMemo(() => {
+    if (viewMode !== 'templates') {
+      return [] as {
+        weekday: number
+        label: string
+        items: (ScheduleItem & { startMinutes: number; endMinutes: number; lane: number })[]
+        lanes: number
+      }[]
+    }
+
+    return templateWeekGroups.map((group) => {
+      const dayStart = new Date('2000-01-01T07:30:00')
+      const dayStartMs = dayStart.getTime()
+      const items = group.items
+        .map((item) => {
+          const startMs = new Date(item.start_time).getTime()
+          const endMs = new Date(item.end_time).getTime()
+          const startMinutes = (startMs - dayStartMs) / 60000
+          const endMinutes = (endMs - dayStartMs) / 60000
+          return {
+            ...item,
+            startMinutes,
+            endMinutes,
+          }
+        })
+        .filter((item) => item.endMinutes > 0 && item.startMinutes < (END_HOUR - START_HOUR) * 60)
+        .sort((a, b) => a.startMinutes - b.startMinutes || a.endMinutes - b.endMinutes)
+
+      const laneEnds: number[] = []
+      const itemsWithLane = items.map((item) => {
+        let laneIndex = laneEnds.findIndex((end) => item.startMinutes >= end)
+        if (laneIndex === -1) {
+          laneIndex = laneEnds.length
+        }
+        laneEnds[laneIndex] = item.endMinutes
+        return { ...item, lane: laneIndex }
+      })
+
+      return {
+        weekday: group.weekday,
+        label: group.label,
+        items: itemsWithLane,
+        lanes: Math.max(1, laneEnds.length),
+      }
+    })
+  }, [templateWeekGroups, viewMode])
+
   const canOpenScheduleItem = (item: ScheduleItem) => {
     if (item.pendingApproval) {
       return canApproveCaptainBookingRequests
@@ -2365,6 +2578,7 @@ function App() {
         setBookingMemberId(item.member_id ?? '')
         setStartTime(formatTimeInput(item.start_time))
         setEndTime(formatTimeInput(item.end_time))
+        setSelectedTemplateSeason((item.season as TemplateSeason | null) ?? 'winter time')
         if (typeof item.weekday === 'number') {
           setSelectedTemplateWeekday(item.weekday)
         }
@@ -2413,17 +2627,18 @@ function App() {
     } else {
       setBookingMemberId('')
     }
-    setStartTime('07:30')
-    setEndTime('09:00')
+    const defaults = getDefaultBookingTimes(selectedDate)
+    setStartTime(defaults.startTime)
+    setEndTime(defaults.endTime)
   }
 
-  const reloadTemplateWeekday = async (weekday: number) => {
+  const reloadTemplates = async () => {
     const { data, error } = await supabase
       .from('booking_templates')
       .select(
-        'id, template_group_id, boat_id, member_id, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
+        'id, template_group_id, boat_id, member_id, season, weekday, start_time, end_time, boat_label, member_label, boats(name,type), members(name)',
       )
-      .eq('weekday', weekday)
+      .order('weekday', { ascending: true })
       .order('start_time', { ascending: true })
 
     if (error) {
@@ -2577,6 +2792,57 @@ function App() {
     }
     return isPermissionValidForDate(permissionUntil, bookingDate)
   }
+
+  const fetchTemplateSeasonSettings = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('template_season_settings')
+      .select('id, next_switch_date')
+      .eq('id', 1)
+      .maybeSingle()
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setTemplateSeasonSettings(data ?? null)
+    setTemplateSwitchDate(data?.next_switch_date ?? '')
+  }, [])
+
+  const saveTemplateSeasonSwitchDate = useCallback(
+    async (nextSwitchDate: string) => {
+      if (!canManageFleet) {
+        return
+      }
+
+      const payload = {
+        id: 1,
+        next_switch_date: nextSwitchDate || null,
+      }
+
+      const { data, error } = await supabase
+        .from('template_season_settings')
+        .upsert(payload, { onConflict: 'id' })
+        .select('id, next_switch_date')
+        .single()
+
+      if (error) {
+        setError(error.message)
+        return
+      }
+
+      setTemplateSeasonSettings(data)
+      setTemplateSwitchDate(data.next_switch_date ?? '')
+      setStatus('Template season switch date updated')
+    },
+    [canManageFleet],
+  )
+
+  useEffect(() => {
+    if (session) {
+      fetchTemplateSeasonSettings()
+    }
+  }, [fetchTemplateSeasonSettings, session])
 
   const getAccessToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession()
@@ -3010,6 +3276,7 @@ function App() {
       const { data: conflicts, error: conflictError } = await supabase
         .from('booking_templates')
         .select('id, template_group_id, start_time, end_time')
+        .eq('season', selectedTemplateSeason)
         .eq('weekday', selectedTemplateWeekday)
         .eq('boat_id', templateBoatId)
         .lt('start_time', end)
@@ -3048,6 +3315,7 @@ function App() {
     const templateGroupId = editingTemplate?.template_group_id ?? crypto.randomUUID()
     const payloads = (selectedTemplateBoatIds.length === 0 ? [null] : selectedTemplateBoatIds).map((boatId) => ({
       template_group_id: templateGroupId,
+      season: selectedTemplateSeason,
       weekday: selectedTemplateWeekday,
       boat_id: boatId,
       member_id: bookingMemberId,
@@ -3112,7 +3380,7 @@ function App() {
     }
 
     resetBookingForm()
-    await reloadTemplateWeekday(selectedTemplateWeekday)
+    await reloadTemplates()
   }
 
   const handleDeleteTemplateRow = async () => {
@@ -3140,7 +3408,7 @@ function App() {
     }
 
     setStatus('Template booking removed')
-    await reloadTemplateWeekday(selectedTemplateWeekday)
+    await reloadTemplates()
     resetBookingForm()
   }
 
@@ -3174,11 +3442,7 @@ function App() {
     for (const boatId of selectedBoatIds) {
       const boat = boats.find((item) => item.id === boatId)
       const usage = (boat?.usage_type ?? '').toLowerCase()
-      if (usage === 'restricted' && !isCaptain) {
-        window.alert('One of the selected boats is restricted and cannot be booked.')
-        return
-      }
-      if (usage === 'captains permission' && !isAdmin && !isCaptain) {
+      if (!isAdmin && !isCaptain && usage && usage !== 'general use') {
         const memberId = currentMember?.id
         if (!hasActiveCaptainPermission(boatId, memberId, selectedDate)) {
           approvalRequiredBoatIds.push(boatId)
@@ -5134,20 +5398,6 @@ function App() {
                       : 'Change to gantt chart'}
                   </button>
                 </div>
-              ) : viewMode === 'templates' ? (
-                <label className="field compact">
-                  <span>Weekday</span>
-                  <select
-                    value={selectedTemplateWeekday}
-                    onChange={(event) => setSelectedTemplateWeekday(Number(event.target.value))}
-                  >
-                    {getWeekdayOptions().map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
               ) : viewMode === 'boats' ? (
                 <label className="field compact">
                   <span>Type</span>
@@ -5163,6 +5413,36 @@ function App() {
                     ))}
                   </select>
                 </label>
+              ) : viewMode === 'templates' ? (
+                <>
+                  <label className="field compact">
+                    <span>Season</span>
+                    <select
+                      value={selectedTemplateSeason}
+                      onChange={(event) =>
+                        setSelectedTemplateSeason(event.target.value as TemplateSeason)
+                      }
+                    >
+                      {TEMPLATE_SEASON_OPTIONS.map((season) => (
+                        <option key={season} value={season}>
+                          {getTemplateSeasonLabel(season)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field compact">
+                    <span>Next switch date</span>
+                    <input
+                      type="date"
+                      value={templateSwitchDate}
+                      onChange={(event) => {
+                        const nextDate = event.target.value
+                        setTemplateSwitchDate(nextDate)
+                        saveTemplateSeasonSwitchDate(nextDate)
+                      }}
+                    />
+                  </label>
+                </>
               ) : null}
               {status || error || (!currentMember && session && !isMemberLoading) ? (
                 <div className="status-inline">
@@ -5862,6 +6142,106 @@ function App() {
                   </tbody>
                 </table>
               </div>
+            ) : viewMode === 'templates' ? (
+              <div className="gantt-week">
+                {isLoading ? (
+                  <p className="empty-state">Loading templates...</p>
+                ) : (
+                  templateWeekGanttGroups.map((group) => (
+                    <div key={group.weekday} className="gantt-day">
+                      <h3 className="booking-list-date">{group.label}</h3>
+                      {group.items.length === 0 ? (
+                        <p className="empty-state">No templates.</p>
+                      ) : (
+                        <div className="gantt-scroll gantt-scroll--day">
+                          <div
+                            className="gantt-grid gantt-grid--day"
+                            style={{
+                              width: (END_HOUR - START_HOUR) * HOUR_WIDTH,
+                              height: group.lanes * LANE_HEIGHT + GANTT_BOTTOM_BUFFER,
+                            }}
+                          >
+                            <div className="gantt-verticals">
+                              {Array.from(
+                                { length: END_HOUR - START_HOUR + 1 },
+                                (_, index) => (
+                                  <div
+                                    key={`${group.weekday}-hour-${index}`}
+                                    className="gantt-line"
+                                    style={{
+                                      left: index * HOUR_WIDTH,
+                                    }}
+                                  />
+                                ),
+                              )}
+                              {Array.from(
+                                { length: END_HOUR - START_HOUR },
+                                (_, index) => (
+                                  <div
+                                    key={`${group.weekday}-half-${index}`}
+                                    className="gantt-line minor"
+                                    style={{
+                                      left: index * HOUR_WIDTH + HOUR_WIDTH / 2,
+                                    }}
+                                  />
+                                ),
+                              )}
+                            </div>
+                            <div className="gantt-hours">
+                              {Array.from(
+                                { length: END_HOUR - Math.ceil(START_HOUR) + 1 },
+                                (_, index) => Math.ceil(START_HOUR) + index,
+                              ).map((hour) => (
+                                <div
+                                  key={`${group.weekday}-${hour}`}
+                                  className="gantt-hour"
+                                  style={{
+                                    left: (hour - START_HOUR) * HOUR_WIDTH,
+                                  }}
+                                >
+                                  {formatHourLabel(hour)}
+                                </div>
+                              ))}
+                            </div>
+                            <div className="gantt-lanes">
+                              {group.items.map((booking) => {
+                                const fullBoatName = getBookingBoatDisplay(booking)
+                                const boatName = getGanttBoatDisplayName(fullBoatName)
+                                const memberName =
+                                  getRelatedName(booking.members) ?? (booking.member_label ?? 'Member')
+                                const left = (booking.startMinutes / 60) * HOUR_WIDTH
+                                const width = Math.max(
+                                  36,
+                                  ((booking.endMinutes - booking.startMinutes) / 60) * HOUR_WIDTH,
+                                )
+                                return (
+                                  <button
+                                    key={booking.id}
+                                    type="button"
+                                    className={`${getScheduleItemPillClassName(booking)} gantt-pill`}
+                                    style={{
+                                      transform: `translate(${left}px, ${booking.lane * LANE_HEIGHT}px)`,
+                                      width,
+                                    }}
+                                    onClick={() => openScheduleItem(booking)}
+                                    disabled={!canOpenScheduleItem(booking)}
+                                    aria-disabled={!canOpenScheduleItem(booking)}
+                                  >
+                                    <div>
+                                      <strong>{boatName}</strong>
+                                      <span>{memberName}</span>
+                                    </div>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
             ) : viewMode === 'schedule' && scheduleDisplayMode === 'list' ? (
               <div className="booking-list">
                 {isLoading ? (
@@ -6315,14 +6695,16 @@ function App() {
                 setShowNewBooking(true)
                 refreshBoatAccess()
                 if (viewMode === 'templates') {
+                  const defaults = getDefaultBookingTimes(selectedDate)
                   setBookingBoatIds([])
                   setBookingMemberId('')
-                  setStartTime('07:30')
-                  setEndTime('09:00')
+                  setStartTime(defaults.startTime)
+                  setEndTime(defaults.endTime)
                 } else if (viewMode === 'schedule' && currentMember && !isAdmin) {
+                  const defaults = getDefaultBookingTimes(selectedDate)
                   setBookingMemberId(currentMember.id)
-                  setStartTime('07:30')
-                  setEndTime('09:00')
+                  setStartTime(defaults.startTime)
+                  setEndTime(defaults.endTime)
                 }
                 setBookingBoatIds([])
                 setBoatSearch('')
@@ -6408,6 +6790,19 @@ function App() {
             ) : viewMode === 'templates' ? (
               <>
                 <div className="form-grid">
+                  <label className="field">
+                    <span>Weekday</span>
+                    <select
+                      value={selectedTemplateWeekday}
+                      onChange={(event) => setSelectedTemplateWeekday(Number(event.target.value))}
+                    >
+                      {getWeekdayOptions().map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   {canManageFleet ? (
                     <label className="field">
                       <span>Member</span>
@@ -6467,6 +6862,9 @@ function App() {
                     <div className="boat-list">
                       {filteredBookingBoats.map((boat) => {
                         const label = boat.type ? `${boat.type} ${boat.name}` : boat.name
+                        const optionLabel = shouldMarkBoatAsCaptainApproval(boat)
+                          ? `${label} (c)`
+                          : label
                         const checked = bookingBoatIds.includes(boat.id)
                         return (
                           <label key={boat.id} className="boat-option">
@@ -6480,11 +6878,14 @@ function App() {
                                 )
                               }}
                             />
-                            <span>{label}</span>
+                            <span>{optionLabel}</span>
                           </label>
                         )
                       })}
                     </div>
+                    <p className="helper">
+                      Boats marked with (c) require captain validation.
+                    </p>
                   </div>
                   <div className="race-event-date-row">
                     <label className="field compact">
@@ -6534,10 +6935,18 @@ function App() {
                   <label className="field">
                     <span>Date</span>
                     <input
-                      value={formatDayLabel(
-                        editingBooking ? toDateInputValue(editingBooking.start_time) : selectedDate,
-                      )}
-                      readOnly
+                      type="date"
+                      value={selectedDate}
+                      disabled={isEditingBookingLocked}
+                      onChange={(event) => {
+                        const nextDate = event.target.value
+                        setSelectedDate(nextDate)
+                        if (!editingBooking) {
+                          const defaults = getDefaultBookingTimes(nextDate)
+                          setStartTime(defaults.startTime)
+                          setEndTime(defaults.endTime)
+                        }
+                      }}
                     />
                   </label>
                   {isAdmin ? (
@@ -6555,12 +6964,7 @@ function App() {
                         ))}
                       </select>
                     </label>
-                  ) : (
-                    <label className="field">
-                      <span>Member</span>
-                      <input value={currentMember?.name ?? ''} readOnly />
-                    </label>
-                  )}
+                  ) : null}
                   <div className="field">
                     <span>Boats</span>
                     <input
@@ -6602,6 +7006,9 @@ function App() {
                     <div className="boat-list">
                       {filteredBookingBoats.map((boat) => {
                         const label = boat.type ? `${boat.type} ${boat.name}` : boat.name
+                        const optionLabel = shouldMarkBoatAsCaptainApproval(boat)
+                          ? `${label} (c)`
+                          : label
                         const checked = bookingBoatIds.includes(boat.id)
                         return (
                           <label key={boat.id} className="boat-option">
@@ -6616,11 +7023,14 @@ function App() {
                                 )
                               }}
                             />
-                            <span>{label}</span>
+                            <span>{optionLabel}</span>
                           </label>
                         )
                       })}
                     </div>
+                    <p className="helper">
+                      Boats marked with (c) require captain validation.
+                    </p>
                   </div>
                   <div className="race-event-date-row">
                     <label className="field compact">

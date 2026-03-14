@@ -84,6 +84,7 @@ create table if not exists bookings (
 
 create table if not exists booking_templates (
   id uuid primary key default gen_random_uuid(),
+  season text not null default 'winter time' check (season in ('summer time', 'winter time')),
   weekday int not null check (weekday >= 0 and weekday <= 6),
   boat_id uuid references boats(id) on delete cascade,
   member_id uuid references members(id) on delete set null,
@@ -93,6 +94,12 @@ create table if not exists booking_templates (
   member_label text,
   created_at timestamptz not null default now(),
   constraint template_end_after_start check (end_time > start_time)
+);
+
+create table if not exists template_season_settings (
+  id int primary key,
+  next_switch_date date,
+  updated_at timestamptz not null default now()
 );
 
 create table if not exists risk_assessments (
@@ -233,6 +240,7 @@ alter table bookings enable row level security;
 alter table admins enable row level security;
 alter table allowed_member enable row level security;
 alter table booking_templates enable row level security;
+alter table template_season_settings enable row level security;
 alter table risk_assessments enable row level security;
 alter table booking_risk_assessments enable row level security;
 alter table template_exceptions enable row level security;
@@ -580,6 +588,10 @@ create policy "Templates readable for authed" on booking_templates
   for select to authenticated
   using (true);
 
+create policy "Template season settings readable for authed" on template_season_settings
+  for select to authenticated
+  using (true);
+
 create policy "Templates insert for captains or admins" on booking_templates
   for insert to authenticated
   with check (
@@ -597,6 +609,33 @@ create policy "Templates insert for captains or admins" on booking_templates
 
 create policy "Templates update for captains or admins" on booking_templates
   for update to authenticated
+  using (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  )
+  with check (
+    exists (
+      select 1 from admins
+      where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
+create policy "Template season settings upsert for captains or admins" on template_season_settings
+  for all to authenticated
   using (
     exists (
       select 1 from admins

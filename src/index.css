@@ -555,8 +555,15 @@ body {
   flex: 1;
 }
 
+.templates-mode .gantt-day {
+  background: rgba(254, 226, 226, 0.8);
+  border-radius: 18px;
+  padding: 10px 12px 12px;
+}
+
 .templates-mode .gantt-grid {
-  background: transparent;
+  background: rgba(254, 242, 242, 0.92);
+  border-radius: 16px;
 }
 
 .gantt-verticals {
