@@ -4637,7 +4637,21 @@ function App() {
   }
 
   const openLoadinPlanEditor = () => {
-    setLoadinPlanDraft(raceEventForm.loadinPlan)
+    const nextDraft = normalizeLoadinPlanState(raceEventForm.loadinPlan)
+    setLoadinPlanDraft(
+      raceEventReadOnly || isCoordinatorRaceEventRequestMode
+        ? {
+            trailer1: {
+              ...nextDraft.trailer1,
+              enabled: true,
+            },
+            trailer2: {
+              ...nextDraft.trailer2,
+              enabled: true,
+            },
+          }
+        : nextDraft,
+    )
     setShowLoadinPlanEditor(true)
   }
 
