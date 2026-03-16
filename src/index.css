@@ -406,6 +406,37 @@ body {
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.75);
   border: 1px solid rgba(148, 163, 184, 0.28);
+  position: relative;
+  padding-right: 34px;
+}
+
+.schedule-legend-toggle {
+  width: 100%;
+  margin-top: -8px;
+  margin-bottom: 6px;
+  padding: 2px 0 4px;
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.35);
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 0.76rem;
+  line-height: 1.1;
+  text-align: center;
+  cursor: pointer;
+}
+
+.schedule-legend-close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  border: 0;
+  background: transparent;
+  color: #111827;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
 }
 
 .schedule-legend-item {

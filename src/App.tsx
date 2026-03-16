@@ -819,6 +819,7 @@ function App() {
     getTemplateSeasonForDate(getTodayString()),
   )
   const [templateSwitchDate, setTemplateSwitchDate] = useState('')
+  const [showScheduleLegend, setShowScheduleLegend] = useState(false)
   const [scheduleDisplayMode, setScheduleDisplayMode] = useState<'gantt' | 'list'>('gantt')
   const [boatTypeFilter, setBoatTypeFilter] = useState('')
   const [viewMode, setViewMode] = useState<
@@ -6311,28 +6312,46 @@ function App() {
               </div>
             ) : viewMode === 'schedule' && scheduleDisplayMode === 'list' ? (
               <div className="booking-list">
-                <div className="schedule-legend">
-                  <span className="schedule-legend-item">
-                    <span className="schedule-legend-swatch" />
-                    Scheduled Outing
-                  </span>
-                  <span className="schedule-legend-item">
-                    <span className="schedule-legend-swatch schedule-legend-swatch--pending" />
-                    Pending confirmation that outing took place
-                  </span>
-                  <span className="schedule-legend-item">
-                    <span className="schedule-legend-swatch schedule-legend-swatch--confirmed" />
-                    Completed Outing
-                  </span>
-                  <span className="schedule-legend-item">
-                    <span className="schedule-legend-swatch schedule-legend-swatch--template" />
-                    Recurrent booking pending confirmation
-                  </span>
-                  <span className="schedule-legend-item">
-                    <span className="booking-pill-marker schedule-legend-marker" />
-                    Risk assessment missing after start time
-                  </span>
-                </div>
+                {showScheduleLegend ? (
+                  <div className="schedule-legend">
+                    <button
+                      className="schedule-legend-close"
+                      type="button"
+                      onClick={() => setShowScheduleLegend(false)}
+                      aria-label="Hide color legend"
+                    >
+                      ×
+                    </button>
+                    <span className="schedule-legend-item">
+                      <span className="schedule-legend-swatch" />
+                      Scheduled Outing
+                    </span>
+                    <span className="schedule-legend-item">
+                      <span className="schedule-legend-swatch schedule-legend-swatch--pending" />
+                      Pending confirmation that outing took place
+                    </span>
+                    <span className="schedule-legend-item">
+                      <span className="schedule-legend-swatch schedule-legend-swatch--confirmed" />
+                      Completed Outing
+                    </span>
+                    <span className="schedule-legend-item">
+                      <span className="schedule-legend-swatch schedule-legend-swatch--template" />
+                      Recurrent booking pending confirmation
+                    </span>
+                    <span className="schedule-legend-item">
+                      <span className="booking-pill-marker schedule-legend-marker" />
+                      Risk assessment missing after start time
+                    </span>
+                  </div>
+                ) : (
+                  <button
+                    className="schedule-legend-toggle"
+                    type="button"
+                    onClick={() => setShowScheduleLegend(true)}
+                  >
+                    Click to see color legend
+                  </button>
+                )}
                 {isLoading ? (
                   <p className="empty-state">Loading schedule...</p>
                 ) : (
@@ -6386,28 +6405,46 @@ function App() {
               </div>
             ) : viewMode === 'schedule' ? (
               <div className="gantt-week">
-                <div className="schedule-legend">
-                  <span className="schedule-legend-item">
-                    <span className="schedule-legend-swatch" />
-                    Scheduled Outing
-                  </span>
-                  <span className="schedule-legend-item">
-                    <span className="schedule-legend-swatch schedule-legend-swatch--pending" />
-                    Pending confirmation that outing took place
-                  </span>
-                  <span className="schedule-legend-item">
-                    <span className="schedule-legend-swatch schedule-legend-swatch--confirmed" />
-                    Completed Outing
-                  </span>
-                  <span className="schedule-legend-item">
-                    <span className="schedule-legend-swatch schedule-legend-swatch--template" />
-                    Recurrent booking pending confirmation
-                  </span>
-                  <span className="schedule-legend-item">
-                    <span className="booking-pill-marker schedule-legend-marker" />
-                    Risk assessment missing after start time
-                  </span>
-                </div>
+                {showScheduleLegend ? (
+                  <div className="schedule-legend">
+                    <button
+                      className="schedule-legend-close"
+                      type="button"
+                      onClick={() => setShowScheduleLegend(false)}
+                      aria-label="Hide color legend"
+                    >
+                      ×
+                    </button>
+                    <span className="schedule-legend-item">
+                      <span className="schedule-legend-swatch" />
+                      Scheduled Outing
+                    </span>
+                    <span className="schedule-legend-item">
+                      <span className="schedule-legend-swatch schedule-legend-swatch--pending" />
+                      Pending confirmation that outing took place
+                    </span>
+                    <span className="schedule-legend-item">
+                      <span className="schedule-legend-swatch schedule-legend-swatch--confirmed" />
+                      Completed Outing
+                    </span>
+                    <span className="schedule-legend-item">
+                      <span className="schedule-legend-swatch schedule-legend-swatch--template" />
+                      Recurrent booking pending confirmation
+                    </span>
+                    <span className="schedule-legend-item">
+                      <span className="booking-pill-marker schedule-legend-marker" />
+                      Risk assessment missing after start time
+                    </span>
+                  </div>
+                ) : (
+                  <button
+                    className="schedule-legend-toggle"
+                    type="button"
+                    onClick={() => setShowScheduleLegend(true)}
+                  >
+                    Click to see color legend
+                  </button>
+                )}
                 {isLoading ? (
                   <p className="empty-state">Loading schedule...</p>
                 ) : (
