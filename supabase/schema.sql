@@ -26,6 +26,7 @@ create table if not exists race_events (
   start_date date not null,
   end_date date not null,
   driver text,
+  loadin_plan jsonb not null default '{}'::jsonb,
   created_by uuid references members(id) on delete set null,
   created_at timestamptz not null default now(),
   constraint race_events_date_range_check check (end_date >= start_date)

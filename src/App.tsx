@@ -56,13 +56,20 @@ const WIND_CONDITION_OPTIONS = [
   'Light/Moderate Breeze with significant gusting',
 ]
 const INCOMING_TIDE_OPTIONS = ['Yes', 'No']
-const LOADIN_PLAN_ROWS = 3
-const LOADIN_PLAN_COLUMNS = 3
-const LOADIN_PLAN_BLOCKED_CELL = `${LOADIN_PLAN_ROWS - 1}-${Math.floor(LOADIN_PLAN_COLUMNS / 2)}`
 const TEMPLATE_WEEKDAY_ORDER = [6, 0, 1, 2, 3, 4, 5]
 const TEMPLATE_SEASON_OPTIONS = ['summer time', 'winter time'] as const
 
 type TemplateSeason = (typeof TEMPLATE_SEASON_OPTIONS)[number]
+
+type LoadinPlanSection = {
+  enabled: boolean
+  cells: Record<string, string>
+}
+
+type LoadinPlanState = {
+  trailer1: LoadinPlanSection
+  trailer2: LoadinPlanSection
+}
 
 type Member = {
   id: string
@@ -179,6 +186,7 @@ type RaceEvent = {
   end_date: string
   driver: string | null
   created_by: string | null
+  loadin_plan?: LoadinPlanState | null
   race_event_boats?: RaceEventBoatLink[] | null
 }
 
@@ -517,6 +525,42 @@ const getTemplateSeasonLabel = (season: TemplateSeason) =>
 
 const getOppositeTemplateSeason = (season: TemplateSeason): TemplateSeason =>
   season === 'summer time' ? 'winter time' : 'summer time'
+
+const createEmptyLoadinPlanState = (): LoadinPlanState => ({
+  trailer1: {
+    enabled: false,
+    cells: {},
+  },
+  trailer2: {
+    enabled: false,
+    cells: {},
+  },
+})
+
+const normalizeLoadinPlanState = (value: unknown): LoadinPlanState => {
+  const fallback = createEmptyLoadinPlanState()
+  if (!value || typeof value !== 'object') {
+    return fallback
+  }
+
+  const source = value as Partial<Record<keyof LoadinPlanState, Partial<LoadinPlanSection>>>
+  return {
+    trailer1: {
+      enabled: Boolean(source.trailer1?.enabled),
+      cells:
+        source.trailer1?.cells && typeof source.trailer1.cells === 'object'
+          ? (source.trailer1.cells as Record<string, string>)
+          : {},
+    },
+    trailer2: {
+      enabled: Boolean(source.trailer2?.enabled),
+      cells:
+        source.trailer2?.cells && typeof source.trailer2.cells === 'object'
+          ? (source.trailer2.cells as Record<string, string>)
+          : {},
+    },
+  }
+}
 
 const isGeneralUseBoat = (boat: Boat | undefined) =>
   (boat?.usage_type ?? '').trim().toLowerCase() === 'general use'
@@ -872,9 +916,9 @@ function App() {
     end_date: getTodayString(),
     driver: '',
     boatIds: [] as string[],
-    loadinPlanCells: {} as Record<string, string>,
+    loadinPlan: createEmptyLoadinPlanState(),
   })
-  const [loadinPlanDraft, setLoadinPlanDraft] = useState<Record<string, string>>({})
+  const [loadinPlanDraft, setLoadinPlanDraft] = useState<LoadinPlanState>(createEmptyLoadinPlanState())
   const [raceEventBoatSearch, setRaceEventBoatSearch] = useState('')
   const [boatPermissionEntries, setBoatPermissionEntries] = useState<BoatPermissionEntry[]>([])
   const [selectedPermissionMemberId, setSelectedPermissionMemberId] = useState('')
@@ -1442,7 +1486,7 @@ function App() {
     const { data, error } = await supabase
       .from('race_events')
       .select(
-        'id, title, start_date, end_date, driver, created_by, race_event_boats(id, boat_id, boats(name,type))',
+        'id, title, start_date, end_date, driver, created_by, loadin_plan, race_event_boats(id, boat_id, boats(name,type))',
       )
       .order('start_date', { ascending: true })
       .order('title', { ascending: true })
@@ -1455,6 +1499,7 @@ function App() {
     setRaceEvents(
       (data ?? []).map((event) => ({
         ...event,
+        loadin_plan: normalizeLoadinPlanState(event.loadin_plan),
         race_event_boats: (event.race_event_boats ?? []).map((link) => ({
           ...link,
           boats: Array.isArray(link.boats) ? link.boats[0] ?? null : link.boats ?? null,
@@ -1542,9 +1587,9 @@ function App() {
       end_date: getTodayString(),
       driver: '',
       boatIds: [],
-      loadinPlanCells: {},
+      loadinPlan: createEmptyLoadinPlanState(),
     })
-    setLoadinPlanDraft({})
+    setLoadinPlanDraft(createEmptyLoadinPlanState())
     setRaceEventBoatSearch('')
   }
 
@@ -1560,9 +1605,9 @@ function App() {
       end_date: event?.end_date ?? event?.start_date ?? getTodayString(),
       driver: event?.driver ?? '',
       boatIds: (event?.race_event_boats ?? []).map((link) => link.boat_id),
-      loadinPlanCells: {},
+      loadinPlan: normalizeLoadinPlanState(event?.loadin_plan),
     })
-    setLoadinPlanDraft({})
+    setLoadinPlanDraft(normalizeLoadinPlanState(event?.loadin_plan))
     setRaceEventBoatSearch('')
   }
 
@@ -4379,6 +4424,7 @@ function App() {
     const endDate = raceEventForm.end_date
     const driver = raceEventForm.driver.trim()
     const boatIds = Array.from(new Set(raceEventForm.boatIds))
+    const loadinPlan = raceEventForm.loadinPlan
 
     setError(null)
     setStatus(null)
@@ -4479,6 +4525,7 @@ function App() {
           start_date: startDate,
           end_date: endDate,
           driver: driver || null,
+          loadin_plan: loadinPlan,
         })
         .eq('id', editingRaceEvent.id)
 
@@ -4495,6 +4542,7 @@ function App() {
           start_date: startDate,
           end_date: endDate,
           driver: driver || null,
+          loadin_plan: loadinPlan,
           created_by: currentMember?.id ?? null,
         })
         .select('id')
@@ -4589,7 +4637,7 @@ function App() {
   }
 
   const openLoadinPlanEditor = () => {
-    setLoadinPlanDraft(raceEventForm.loadinPlanCells)
+    setLoadinPlanDraft(raceEventForm.loadinPlan)
     setShowLoadinPlanEditor(true)
   }
 
@@ -4598,8 +4646,94 @@ function App() {
   }
 
   const saveLoadinPlanEditor = () => {
-    setRaceEventForm((prev) => ({ ...prev, loadinPlanCells: loadinPlanDraft }))
+    setRaceEventForm((prev) => ({ ...prev, loadinPlan: loadinPlanDraft }))
     setShowLoadinPlanEditor(false)
+  }
+
+  const renderLoadinTrailer = (
+    trailerKey: keyof LoadinPlanState,
+    label: string,
+    rows: number,
+    columns: number,
+  ) => {
+    const blockedCell = `${rows - 1}-${Math.floor(columns / 2)}`
+    const trailer = loadinPlanDraft[trailerKey] ?? createEmptyLoadinPlanState()[trailerKey]
+
+    return (
+      <div className="loadin-plan-section">
+        <label className="loadin-plan-toggle">
+          <input
+            type="checkbox"
+            checked={trailer.enabled}
+            disabled={raceEventReadOnly || isCoordinatorRaceEventRequestMode}
+            onChange={(event) =>
+              setLoadinPlanDraft((prev) => ({
+                ...prev,
+                [trailerKey]: {
+                  ...prev[trailerKey],
+                  enabled: event.target.checked,
+                },
+              }))
+            }
+          />
+          <span>{label}</span>
+        </label>
+        {trailer.enabled ? (
+          <div className="loadin-plan-grid" role="grid" aria-label={`${label} grid`}>
+            {Array.from({ length: rows }, (_, rowIndex) => (
+              <div
+                key={`${trailerKey}-row-${rowIndex}`}
+                className="loadin-plan-row"
+                style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+                role="row"
+              >
+                {Array.from({ length: columns }, (_, columnIndex) => {
+                  const cellKey = `${rowIndex}-${columnIndex}`
+                  const blocked = cellKey === blockedCell
+                  const cellValue = trailer.cells[cellKey] ?? ''
+                  return (
+                    <input
+                      key={`${trailerKey}-${cellKey}`}
+                      className={`loadin-plan-cell${cellValue ? ' selected' : ''}${blocked ? ' blocked' : ''}`}
+                      type="text"
+                      role="gridcell"
+                      value={blocked ? '' : cellValue}
+                      maxLength={2}
+                      inputMode="text"
+                      autoCapitalize="characters"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      disabled={blocked || raceEventReadOnly || isCoordinatorRaceEventRequestMode}
+                      onChange={(event) => {
+                        const nextValue = event.target.value
+                          .toUpperCase()
+                          .replace(/[^A-Z]/g, '')
+                          .slice(0, 2)
+                        setLoadinPlanDraft((prev) => {
+                          const nextCells = { ...prev[trailerKey].cells }
+                          if (!nextValue) {
+                            delete nextCells[cellKey]
+                          } else {
+                            nextCells[cellKey] = nextValue
+                          }
+                          return {
+                            ...prev,
+                            [trailerKey]: {
+                              ...prev[trailerKey],
+                              cells: nextCells,
+                            },
+                          }
+                        })
+                      }}
+                    />
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    )
   }
 
   const handleApproveRaceEventChangeRequest = async (request: RaceEventChangeRequest) => {
@@ -7650,11 +7784,9 @@ function App() {
                     ? 'Edit race event'
                     : 'Create race event'}
               </h3>
-              {!raceEventReadOnly && !isCoordinatorRaceEventRequestMode ? (
-                <button className="button ghost" type="button" onClick={openLoadinPlanEditor}>
-                  LOADING PLAN
-                </button>
-              ) : null}
+              <button className="button ghost" type="button" onClick={openLoadinPlanEditor}>
+                LOADING PLAN
+              </button>
             </div>
             <div className="form-grid">
               <label className="field">
@@ -7814,45 +7946,9 @@ function App() {
                 Loading plan for event {raceEventForm.title.trim() || 'untitled event'}
               </h3>
             </div>
-            <div className="loadin-plan-grid" role="grid" aria-label="Loadin plan grid">
-              {Array.from({ length: LOADIN_PLAN_ROWS }, (_, rowIndex) => (
-                <div key={`loadin-row-${rowIndex}`} className="loadin-plan-row" role="row">
-                  {Array.from({ length: LOADIN_PLAN_COLUMNS }, (_, columnIndex) => {
-                    const cellKey = `${rowIndex}-${columnIndex}`
-                    const blocked = cellKey === LOADIN_PLAN_BLOCKED_CELL
-                    const cellValue = loadinPlanDraft[cellKey] ?? ''
-                    return (
-                      <input
-                        key={cellKey}
-                        className={`loadin-plan-cell${cellValue ? ' selected' : ''}${blocked ? ' blocked' : ''}`}
-                        type="text"
-                        role="gridcell"
-                        value={blocked ? '' : cellValue}
-                        maxLength={2}
-                        inputMode="text"
-                        autoCapitalize="characters"
-                        autoCorrect="off"
-                        spellCheck={false}
-                        disabled={blocked}
-                        onChange={(event) => {
-                          const nextValue = event.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2)
-                          setLoadinPlanDraft((prev) => {
-                            if (!nextValue) {
-                              const nextDraft = { ...prev }
-                              delete nextDraft[cellKey]
-                              return nextDraft
-                            }
-                            return {
-                              ...prev,
-                              [cellKey]: nextValue,
-                            }
-                          })
-                        }}
-                      />
-                    )
-                  })}
-                </div>
-              ))}
+            <div className="loadin-plan-sections">
+              {renderLoadinTrailer('trailer1', 'Trailer 1', 4, 3)}
+              {renderLoadinTrailer('trailer2', 'Trailer 2', 3, 3)}
             </div>
             <div className="field">
               <span>Selected boats</span>
@@ -7873,9 +7969,11 @@ function App() {
               )}
             </div>
             <div className="modal-actions">
-              <button className="button primary" type="button" onClick={saveLoadinPlanEditor}>
-                Save
-              </button>
+              {!raceEventReadOnly && !isCoordinatorRaceEventRequestMode ? (
+                <button className="button primary" type="button" onClick={saveLoadinPlanEditor}>
+                  Save
+                </button>
+              ) : null}
               <button className="button ghost" type="button" onClick={closeLoadinPlanEditor}>
                 Close
               </button>

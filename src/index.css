@@ -977,27 +977,60 @@ body {
   margin-bottom: 10px;
 }
 
+.loadin-plan-sections {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.loadin-plan-section {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.loadin-plan-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--ink-2);
+  justify-content: flex-start;
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  align-self: start;
+}
+
+.loadin-plan-toggle input {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.loadin-plan-toggle span {
+  flex: 0 0 auto;
+}
+
 .loadin-plan-grid {
   display: grid;
   gap: 6px;
-  margin-bottom: 14px;
 }
 
 .loadin-plan-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
 .loadin-plan-cell {
   width: 100%;
-  aspect-ratio: 1 / 1;
+  min-height: 42px;
   border: 1px solid var(--stroke);
   border-radius: 8px;
   background: #f8fafc;
   cursor: text;
   text-align: center;
-  font-size: 1rem;
+  font-size: 0.9rem;
   font-weight: 700;
   text-transform: uppercase;
   padding: 0;
@@ -1009,8 +1042,8 @@ body {
 }
 
 .loadin-plan-cell.blocked {
-  background: #e2e8f0;
-  border-color: #94a3b8;
+  background: #111111;
+  border-color: #111111;
   cursor: not-allowed;
 }
 
