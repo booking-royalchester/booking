@@ -3600,7 +3600,7 @@ function App() {
       return
     }
 
-    let conflictQuery = supabase
+    const conflictQuery = supabase
       .from('bookings')
       .select('id, booking_group_id, boat_id')
       .in('boat_id', selectedBoatIds)
@@ -4521,7 +4521,6 @@ function App() {
         .from('race_events')
         .update({
           title,
-          event_date: startDate,
           start_date: startDate,
           end_date: endDate,
           driver: driver || null,
@@ -4538,7 +4537,6 @@ function App() {
         .from('race_events')
         .insert({
           title,
-          event_date: startDate,
           start_date: startDate,
           end_date: endDate,
           driver: driver || null,
