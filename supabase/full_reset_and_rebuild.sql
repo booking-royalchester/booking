@@ -200,6 +200,7 @@ create table if not exists allowed_member (
   name text not null,
   role text not null default 'coordinator' check (role in ('admin', 'captain', 'coordinator', 'guest')),
   is_admin boolean not null default false,
+  force_password_reset boolean not null default false,
   created_at timestamptz not null default now()
 );
 
@@ -441,23 +442,35 @@ create policy "Captain booking requests update by approvers" on captain_booking_
     )
   );
 
-drop policy if exists "Race events insert for admins" on race_events;
-create policy "Race events insert for admins" on race_events
+drop policy if exists "Race events insert for captains or admins" on race_events;
+create policy "Race events insert for captains or admins" on race_events
   for insert to authenticated
   with check (
     exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
     )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
   );
 
-drop policy if exists "Race events update for admins" on race_events;
-create policy "Race events update for admins" on race_events
+drop policy if exists "Race events update for captains or admins" on race_events;
+create policy "Race events update for captains or admins" on race_events
   for update to authenticated
   using (
     exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
     )
   )
   with check (
@@ -465,35 +478,59 @@ create policy "Race events update for admins" on race_events
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
     )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
   );
 
-drop policy if exists "Race events delete for admins" on race_events;
-create policy "Race events delete for admins" on race_events
+drop policy if exists "Race events delete for captains or admins" on race_events;
+create policy "Race events delete for captains or admins" on race_events
   for delete to authenticated
   using (
     exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
     )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
   );
 
-drop policy if exists "Race event boats insert for admins" on race_event_boats;
-create policy "Race event boats insert for admins" on race_event_boats
+drop policy if exists "Race event boats insert for captains or admins" on race_event_boats;
+create policy "Race event boats insert for captains or admins" on race_event_boats
   for insert to authenticated
   with check (
     exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
     )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
   );
 
-drop policy if exists "Race event boats update for admins" on race_event_boats;
-create policy "Race event boats update for admins" on race_event_boats
+drop policy if exists "Race event boats update for captains or admins" on race_event_boats;
+create policy "Race event boats update for captains or admins" on race_event_boats
   for update to authenticated
   using (
     exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
     )
   )
   with check (
@@ -501,15 +538,27 @@ create policy "Race event boats update for admins" on race_event_boats
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
     )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
   );
 
-drop policy if exists "Race event boats delete for admins" on race_event_boats;
-create policy "Race event boats delete for admins" on race_event_boats
+drop policy if exists "Race event boats delete for captains or admins" on race_event_boats;
+create policy "Race event boats delete for captains or admins" on race_event_boats
   for delete to authenticated
   using (
     exists (
       select 1 from admins
       where member_id = (select id from members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from allowed_member am
+      where lower(am.email) = lower(auth.email())
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
     )
   );
 
@@ -1095,7 +1144,7 @@ create policy "Allowed members insert for authed" on allowed_member
         where lower(am.email) = lower(auth.email())
         and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
       )
-      and coalesce(role, case when is_admin then 'admin' else 'coordinator' end) in ('coordinator', 'guest')
+      and coalesce(role, case when is_admin then 'admin' else 'coordinator' end) in ('captain', 'coordinator', 'guest')
       and coalesce(is_admin, false) = false
     )
     or (
@@ -2630,3 +2679,188 @@ alter table public.race_events
 
 alter table public.race_events
   alter column loadin_plan set not null;
+
+
+-- === supabase/migrations/2026-04-05_add_force_password_reset_to_allowed_member.sql ===
+
+begin;
+
+alter table public.allowed_member
+  add column if not exists force_password_reset boolean not null default false;
+
+commit;
+
+
+-- === supabase/migrations/2026-04-05_allow_captains_manage_race_events_and_add_captains.sql ===
+
+begin;
+
+drop policy if exists "Race events insert for admins" on public.race_events;
+drop policy if exists "Race events insert for captains or admins" on public.race_events;
+drop policy if exists "Race events insert for captains or admins" on public.race_events;
+create policy "Race events insert for captains or admins" on public.race_events
+  for insert to authenticated
+  with check (
+    exists (
+      select 1 from public.admins
+      where member_id = (select id from public.members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from public.allowed_member am
+      where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
+drop policy if exists "Race events update for admins" on public.race_events;
+drop policy if exists "Race events update for captains or admins" on public.race_events;
+drop policy if exists "Race events update for captains or admins" on public.race_events;
+create policy "Race events update for captains or admins" on public.race_events
+  for update to authenticated
+  using (
+    exists (
+      select 1 from public.admins
+      where member_id = (select id from public.members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from public.allowed_member am
+      where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.admins
+      where member_id = (select id from public.members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from public.allowed_member am
+      where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
+drop policy if exists "Race events delete for admins" on public.race_events;
+drop policy if exists "Race events delete for captains or admins" on public.race_events;
+drop policy if exists "Race events delete for captains or admins" on public.race_events;
+create policy "Race events delete for captains or admins" on public.race_events
+  for delete to authenticated
+  using (
+    exists (
+      select 1 from public.admins
+      where member_id = (select id from public.members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from public.allowed_member am
+      where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
+drop policy if exists "Race event boats insert for admins" on public.race_event_boats;
+drop policy if exists "Race event boats insert for captains or admins" on public.race_event_boats;
+drop policy if exists "Race event boats insert for captains or admins" on public.race_event_boats;
+create policy "Race event boats insert for captains or admins" on public.race_event_boats
+  for insert to authenticated
+  with check (
+    exists (
+      select 1 from public.admins
+      where member_id = (select id from public.members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from public.allowed_member am
+      where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
+drop policy if exists "Race event boats update for admins" on public.race_event_boats;
+drop policy if exists "Race event boats update for captains or admins" on public.race_event_boats;
+drop policy if exists "Race event boats update for captains or admins" on public.race_event_boats;
+create policy "Race event boats update for captains or admins" on public.race_event_boats
+  for update to authenticated
+  using (
+    exists (
+      select 1 from public.admins
+      where member_id = (select id from public.members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from public.allowed_member am
+      where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.admins
+      where member_id = (select id from public.members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from public.allowed_member am
+      where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
+drop policy if exists "Race event boats delete for admins" on public.race_event_boats;
+drop policy if exists "Race event boats delete for captains or admins" on public.race_event_boats;
+drop policy if exists "Race event boats delete for captains or admins" on public.race_event_boats;
+create policy "Race event boats delete for captains or admins" on public.race_event_boats
+  for delete to authenticated
+  using (
+    exists (
+      select 1 from public.admins
+      where member_id = (select id from public.members where email = auth.email())
+    )
+    or exists (
+      select 1
+      from public.allowed_member am
+      where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+    )
+  );
+
+drop policy if exists "Allowed members insert for authed" on public.allowed_member;
+drop policy if exists "Allowed members insert for authed" on public.allowed_member;
+create policy "Allowed members insert for authed" on public.allowed_member
+  for insert to authenticated
+  with check (
+    (
+      exists (
+        select 1 from public.admins
+        where member_id = (select id from public.members where email = auth.email())
+      )
+      and coalesce(role, case when is_admin then 'admin' else 'coordinator' end)
+        in ('admin', 'captain', 'coordinator', 'guest')
+    )
+    or (
+      exists (
+        select 1
+        from public.allowed_member am
+        where lower(am.email) = lower(auth.email())
+          and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
+      )
+      and coalesce(role, case when is_admin then 'admin' else 'coordinator' end)
+        in ('captain', 'coordinator', 'guest')
+      and coalesce(is_admin, false) = false
+    )
+    or (
+      exists (
+        select 1
+        from public.allowed_member am
+        where lower(am.email) = lower(auth.email())
+          and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'coordinator'
+      )
+      and coalesce(role, case when is_admin then 'admin' else 'coordinator' end) = 'guest'
+      and coalesce(is_admin, false) = false
+    )
+  );
+
+commit;

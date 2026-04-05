@@ -815,7 +815,14 @@ function App() {
   const [roleFromAllowlist, setRoleFromAllowlist] = useState<UserRole | null>(null)
   const [members, setMembers] = useState<Member[]>([])
   const [allowedMembers, setAllowedMembers] = useState<
-    { id: string; email: string; name: string; role?: UserRole | null; is_admin: boolean }[]
+    {
+      id: string
+      email: string
+      name: string
+      role?: UserRole | null
+      is_admin: boolean
+      force_password_reset?: boolean
+    }[]
   >([])
   const [raceEvents, setRaceEvents] = useState<RaceEvent[]>([])
   const [raceEventChangeRequests, setRaceEventChangeRequests] = useState<RaceEventChangeRequest[]>(
@@ -837,6 +844,7 @@ function App() {
   const [templateSeasonSettings, setTemplateSeasonSettings] = useState<TemplateSeasonSettings | null>(
     null,
   )
+  const [resettingPasswordEmail, setResettingPasswordEmail] = useState<string | null>(null)
   const [templateExceptions, setTemplateExceptions] = useState<TemplateException[]>([])
   const [boatPermissions, setBoatPermissions] = useState<Record<string, Record<string, string | null>>>({})
   const [bookingMemberId, setBookingMemberId] = useState('')
@@ -1183,7 +1191,7 @@ function App() {
       setIsMemberLoading(true)
       const { data: allowed, error: allowedError } = await supabase
         .from('allowed_member')
-        .select('email, name, role, is_admin')
+        .select('email, name, role, is_admin, force_password_reset')
         .ilike('email', sessionEmail)
         .maybeSingle()
 
@@ -1214,6 +1222,10 @@ function App() {
       setRoleFromAllowlist(resolvedRole)
       setUserRole(resolvedRole)
       setIsAdmin(resolvedRole === 'admin')
+      if (allowed.force_password_reset) {
+        setStatus('Your temporary password is your email address. Choose a new password to continue.')
+        setAuthView('setPassword')
+      }
 
       const { data, error } = await supabase
         .from('members')
@@ -1386,7 +1398,7 @@ function App() {
   const fetchAllowedMembers = useCallback(async () => {
     const { data, error } = await supabase
       .from('allowed_member')
-      .select('id, email, name, role, is_admin')
+      .select('id, email, name, role, is_admin, force_password_reset')
       .order('name', { ascending: true })
 
     if (error) {
@@ -3179,10 +3191,32 @@ function App() {
     const { error: updateError } = await supabase.auth.updateUser({
       password: newPassword,
     })
-    setIsAuthBusy(false)
 
     if (updateError) {
+      setIsAuthBusy(false)
       setError(updateError.message)
+      return
+    }
+
+    const accessToken = await getAccessToken()
+    if (!accessToken) {
+      setIsAuthBusy(false)
+      setError('Unable to confirm the password reset state for this session.')
+      return
+    }
+
+    const response = await fetch('/api/auth/clear-force-password-reset', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    })
+
+    const payload = (await response.json().catch(() => ({}))) as { error?: string }
+    setIsAuthBusy(false)
+
+    if (!response.ok) {
+      setError(payload.error || 'Password updated, but the reset flag could not be cleared.')
       return
     }
 
@@ -5072,6 +5106,58 @@ function App() {
     fetchAllowedMembers()
   }
 
+  const handleResetMemberPassword = async (member: {
+    email: string
+    name: string
+    force_password_reset?: boolean
+  }) => {
+    if (!isAdmin && !isCaptain) {
+      setError('Only admins and captains can reset passwords.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Reset password for ${member.name || member.email}? Temporary password will be the member email address.`,
+    )
+    if (!confirmed) {
+      return
+    }
+
+    setError(null)
+    setStatus(null)
+    setResettingPasswordEmail(member.email)
+
+    try {
+      const accessToken = await getAccessToken()
+      if (!accessToken) {
+        throw new Error('Missing auth token.')
+      }
+
+      const response = await fetch('/api/auth/reset-member-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ email: member.email }),
+      })
+
+      const payload = (await response.json().catch(() => ({}))) as { error?: string }
+      if (!response.ok) {
+        throw new Error(payload.error || 'Unable to reset password.')
+      }
+
+      setStatus(
+        `Temporary password reset for ${member.email}. They must use their email address as password, then choose a new one on next sign-in.`,
+      )
+      await fetchAllowedMembers()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to reset password.')
+    } finally {
+      setResettingPasswordEmail(null)
+    }
+  }
+
   const resetGroupForm = () => {
     setShowGroupEditor(false)
     setEditingGroup(null)
@@ -6275,8 +6361,21 @@ function App() {
                       <tr key={member.id}>
                         <td>{member.name}</td>
                         <td>{member.email}</td>
-                        <td>{getRoleLabel(member.role ?? (member.is_admin ? 'admin' : 'coordinator'))}</td>
                         <td>
+                          {getRoleLabel(member.role ?? (member.is_admin ? 'admin' : 'coordinator'))}
+                          {member.force_password_reset ? ' (password reset pending)' : ''}
+                        </td>
+                        <td>
+                          {isAdmin || isCaptain ? (
+                            <button
+                              className="button ghost small"
+                              type="button"
+                              onClick={() => handleResetMemberPassword(member)}
+                              disabled={resettingPasswordEmail === member.email}
+                            >
+                              {resettingPasswordEmail === member.email ? 'Resetting...' : 'Reset password'}
+                            </button>
+                          ) : null}
                           {isAdmin ? (
                             <button
                               className="button ghost danger small"
