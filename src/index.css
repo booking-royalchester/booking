@@ -557,8 +557,8 @@ body {
   font-size: 0.9rem;
 }
 
-.access-table th:last-child,
-.access-table td:last-child {
+.access-table th.actions-col,
+.access-table td.actions-col {
   text-align: right;
   width: 1%;
   white-space: nowrap;
@@ -566,6 +566,13 @@ body {
 
 .access-table tbody tr:hover {
   background: rgba(148, 163, 184, 0.12);
+}
+
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .race-events-list {
@@ -1162,6 +1169,19 @@ select:focus {
 .button.ghost.danger {
   border-color: rgba(239, 68, 68, 0.4);
   color: #b91c1c;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  padding: 8px 10px;
+}
+
+.icon-button svg {
+  width: 16px;
+  height: 16px;
 }
 
 .button:disabled {

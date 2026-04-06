@@ -6357,21 +6357,21 @@ function App() {
                   <thead>
                     <tr>
                       <th>Name</th>
-                      <th>Email</th>
                       <th>Role</th>
-                      <th />
+                      <th className="actions-col">Actions</th>
+                      <th>Email</th>
                     </tr>
                   </thead>
                   <tbody>
                     {allowedMembers.map((member) => (
                       <tr key={member.id}>
                         <td>{member.name}</td>
-                        <td>{member.email}</td>
                         <td>
                           {getRoleLabel(member.role ?? (member.is_admin ? 'admin' : 'coordinator'))}
                           {member.force_password_reset ? ' (password reset pending)' : ''}
                         </td>
-                        <td>
+                        <td className="actions-col">
+                          <div className="row-actions">
                           {isAdmin || isCaptain ? (
                             <button
                               className="button ghost small"
@@ -6384,14 +6384,23 @@ function App() {
                           ) : null}
                           {isAdmin ? (
                             <button
-                              className="button ghost danger small"
+                              className="button ghost danger small icon-button"
                               type="button"
                               onClick={() => handleDeleteAccess(member)}
+                              aria-label={`Remove ${member.name}`}
+                              title={`Remove ${member.name}`}
                             >
-                              Remove
+                              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path
+                                  d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 6h2v8h-2V9zm4 0h2v8h-2V9zM7 9h2v8H7V9zm-1 12h12l1-13H5l1 13z"
+                                  fill="currentColor"
+                                />
+                              </svg>
                             </button>
                           ) : null}
+                          </div>
                         </td>
+                        <td>{member.email}</td>
                       </tr>
                     ))}
                   </tbody>
