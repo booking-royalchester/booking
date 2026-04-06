@@ -772,6 +772,12 @@ body {
   justify-content: flex-end;
 }
 
+.push-prompt .button.primary {
+  background: linear-gradient(140deg, var(--river-1), var(--river-2));
+  color: white;
+  box-shadow: 0 10px 24px rgba(31, 122, 107, 0.22);
+}
+
 .status-inline {
   display: flex;
   align-items: center;
