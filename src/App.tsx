@@ -3927,13 +3927,19 @@ function App() {
     }
 
     const bookingIds = editingBooking.booking_ids ?? [editingBooking.id]
-    const { error: deleteError } = await supabase
+    const { data: deletedRows, error: deleteError } = await supabase
       .from('bookings')
       .delete()
+      .select('id')
       .in('id', bookingIds)
 
     if (deleteError) {
       setError(deleteError.message)
+      return
+    }
+
+    if ((deletedRows ?? []).length === 0) {
+      setError('This booking could not be deleted. Check your access rights and try again.')
       return
     }
 

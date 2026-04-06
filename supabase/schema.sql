@@ -1009,13 +1009,20 @@ create policy "Bookings delete for authed" on bookings
       select 1
       from allowed_member am
       where lower(am.email) = lower(auth.email())
-      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) in ('admin', 'coordinator')
+      and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end)
+        in ('admin', 'captain', 'coordinator')
     )
     and (
       member_id = (select id from members where email = auth.email())
       or exists (
         select 1 from admins
         where member_id = (select id from members where email = auth.email())
+      )
+      or exists (
+        select 1
+        from allowed_member am
+        where lower(am.email) = lower(auth.email())
+        and coalesce(am.role, case when am.is_admin then 'admin' else 'coordinator' end) = 'captain'
       )
     )
   );
