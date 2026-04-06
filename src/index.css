@@ -12,6 +12,9 @@
   --paper: #f7f5f1;
   --accent: #f97316;
   --accent-2: #facc15;
+  --river-1: #1f7a6b;
+  --river-2: #7ec8a5;
+  --river-3: #e7f6ef;
   --surface: rgba(255, 255, 255, 0.86);
   --surface-strong: rgba(255, 255, 255, 0.96);
   --stroke: rgba(15, 23, 42, 0.12);
@@ -67,7 +70,7 @@ body {
   left: 0;
   right: 0;
   z-index: 6000;
-  background: #0f172a;
+  background: linear-gradient(120deg, var(--river-1), #185e56);
   color: white;
   display: flex;
   align-items: center;
@@ -75,16 +78,18 @@ body {
   gap: 16px;
   padding: 10px 16px;
   font-weight: 600;
+  box-shadow: 0 12px 28px rgba(31, 122, 107, 0.28);
 }
 
 .update-banner button {
   border: none;
-  background: white;
-  color: #0f172a;
+  background: rgba(255, 255, 255, 0.16);
+  color: white;
   padding: 6px 14px;
   border-radius: 999px;
   font-weight: 600;
   cursor: pointer;
+  backdrop-filter: blur(8px);
 }
 
 .page-pad {
@@ -750,9 +755,9 @@ body {
   gap: 16px;
   padding: 16px 18px;
   border-radius: 18px;
-  border: 1px solid rgba(249, 115, 22, 0.28);
-  background: linear-gradient(135deg, rgba(255, 247, 237, 0.96), rgba(255, 237, 213, 0.9));
-  box-shadow: 0 10px 24px rgba(249, 115, 22, 0.12);
+  border: 1px solid rgba(31, 122, 107, 0.22);
+  background: linear-gradient(135deg, rgba(231, 246, 239, 0.96), rgba(212, 239, 227, 0.9));
+  box-shadow: 0 10px 24px rgba(31, 122, 107, 0.12);
 }
 
 .push-prompt p {
@@ -1197,12 +1202,12 @@ select:focus {
   height: 56px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(120deg, var(--accent), var(--accent-2));
-  color: #1f2937;
+  background: linear-gradient(140deg, var(--river-1), var(--river-2));
+  color: white;
   font-size: 2rem;
   line-height: 1;
   font-weight: 600;
-  box-shadow: 0 14px 28px rgba(249, 115, 22, 0.3);
+  box-shadow: 0 14px 28px rgba(31, 122, 107, 0.28);
   cursor: pointer;
   z-index: 1000;
   display: inline-flex;
@@ -1217,7 +1222,8 @@ select:focus {
 }
 
 .fab:hover {
-  transform: translateY(-2px);
+  transform: translateX(-50%) translateY(-2px);
+  box-shadow: 0 18px 32px rgba(31, 122, 107, 0.32);
 }
 
 .schedule {
