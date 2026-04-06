@@ -5068,8 +5068,13 @@ function App() {
   }
 
   const handleDeleteAccess = async (member: { email: string; role?: UserRole | null; is_admin?: boolean }) => {
-    if (!isAdmin) {
-      setError('Only admins can remove access.')
+    if (!isAdmin && !isCaptain) {
+      setError('Only admins and captains can remove access.')
+      return
+    }
+    const targetRole = member.role ?? (member.is_admin ? 'admin' : 'coordinator')
+    if (isCaptain && targetRole === 'admin') {
+      setError('Captains cannot remove admin access.')
       return
     }
     const confirmDelete = window.confirm('Remove this user access?')
@@ -5093,7 +5098,7 @@ function App() {
       return
     }
 
-    if (memberRow?.id) {
+    if (isAdmin && memberRow?.id) {
       await supabase.from('admins').delete().eq('member_id', memberRow.id)
       await supabase.from('members').delete().eq('id', memberRow.id)
     }
@@ -5108,7 +5113,11 @@ function App() {
       return
     }
 
-    setStatus('Access removed.')
+    setStatus(
+      isAdmin
+        ? 'Access removed.'
+        : 'Access removed. If this user already had an account, they will no longer be authorized to sign in.',
+    )
     fetchAllowedMembers()
   }
 
@@ -6382,7 +6391,7 @@ function App() {
                               {resettingPasswordEmail === member.email ? 'Resetting...' : 'Reset password'}
                             </button>
                           ) : null}
-                          {isAdmin ? (
+                          {isAdmin || isCaptain ? (
                             <button
                               className="button ghost danger small icon-button"
                               type="button"
