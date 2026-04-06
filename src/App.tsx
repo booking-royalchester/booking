@@ -1623,6 +1623,24 @@ function App() {
     setRaceEventBoatSearch('')
   }
 
+  const getRaceEventBoatLabel = useCallback(
+    (boatId: string) => {
+      const directBoat = boats.find((item) => item.id === boatId)
+      if (directBoat) {
+        return formatBoatDisplayLabel(directBoat)
+      }
+
+      const linkedBoat = (editingRaceEvent?.race_event_boats ?? []).find((link) => link.boat_id === boatId)?.boats
+      const normalizedLinkedBoat = Array.isArray(linkedBoat) ? linkedBoat[0] ?? null : linkedBoat ?? null
+      if (normalizedLinkedBoat) {
+        return formatBoatDisplayLabel(normalizedLinkedBoat)
+      }
+
+      return 'Boat'
+    },
+    [boats, editingRaceEvent],
+  )
+
   const fetchRaceEventConflictingBoatIds = useCallback(
     async (eventDate: string, boatIds: string[]) => {
       if (boatIds.length === 0) {
@@ -7999,13 +8017,7 @@ function App() {
                   ) : (
                     <span className="helper">
                       {raceEventForm.boatIds
-                        .map((boatId) => {
-                          const boat = boats.find((item) => item.id === boatId)
-                          if (!boat) {
-                            return 'Boat'
-                          }
-                          return boat.type ? `${boat.type} ${abbreviateBoatNameForRaceEvents(boat.name)}` : boat.name
-                        })
+                        .map((boatId) => getRaceEventBoatLabel(boatId))
                         .join(', ')}
                     </span>
                   )}
@@ -8098,11 +8110,9 @@ function App() {
               ) : (
                 <div className="loadin-plan-boat-list">
                   {raceEventForm.boatIds.map((boatId) => {
-                    const boat = boats.find((item) => item.id === boatId)
-                    const label = boat ? `${boat.type ? `${boat.type} ` : ''}${boat.name}` : 'Boat'
                     return (
                       <div key={`loadin-boat-${boatId}`} className="loadin-plan-boat-item">
-                        {label}
+                        {getRaceEventBoatLabel(boatId)}
                       </div>
                     )
                   })}
