@@ -1335,7 +1335,7 @@ function App() {
     }
 
     if (mode === 'signup' || mode === 'login' || hashParams.get('type') === 'signup') {
-      setStatus('Email confirmed. Please sign in.')
+      setStatus('Account ready. Please sign in.')
     }
 
     const code = searchParams.get('code')
@@ -3110,7 +3110,7 @@ function App() {
       return
     }
 
-    const { error: signupError } = await supabase.auth.signUp({
+    const { data: signupData, error: signupError } = await supabase.auth.signUp({
       email: normalizedEmail,
       password: signupPassword,
       options: {
@@ -3125,7 +3125,13 @@ function App() {
       return
     }
 
-    setStatus(`Confirm your email to finish signup: ${normalizedEmail}. Please also check your spam folder.`)
+    if (signupData.session) {
+      setStatus(`Account created for ${normalizedEmail}. You are now signed in.`)
+    } else {
+      setStatus(`Account created for ${normalizedEmail}. You can sign in now.`)
+      setAuthView('signin')
+      setLoginEmail(normalizedEmail)
+    }
     setSignupPassword('')
     setSignupConfirm('')
   }
@@ -3170,7 +3176,7 @@ function App() {
       return
     }
 
-    setStatus(`Password reset email sent to ${email}. Please also check your spam folder.`)
+    setStatus(`Password reset email sent to ${email}.`)
   }
 
   const handleSetPassword = async () => {
@@ -6913,7 +6919,7 @@ function App() {
                   {authView === 'setPassword'
                     ? 'Reset password'
                     : authView === 'signup'
-                      ? 'Sign up'
+                      ? 'Create account'
                       : authView === 'recovery'
                         ? 'Forgot password'
                         : 'Sign in'}
@@ -6993,7 +6999,7 @@ function App() {
                     onClick={handleSignUp}
                     disabled={isSendingEmail}
                   >
-                    {isSendingEmail ? 'Sending email...' : 'Send verification email'}
+                    {isSendingEmail ? 'Creating account...' : 'Create account'}
                   </button>
                   <button
                     className="button ghost"
@@ -7071,7 +7077,7 @@ function App() {
                       type="button"
                       onClick={() => setAuthView('signup')}
                     >
-                      Create an account
+                      Create account
                     </button>
                     <button
                       className="link-button"
