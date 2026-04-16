@@ -943,6 +943,7 @@ function App() {
   const [isPendingLoading, setIsPendingLoading] = useState(false)
   const [pendingActionId, setPendingActionId] = useState<string | null>(null)
   const [pendingTemplateActionId, setPendingTemplateActionId] = useState<string | null>(null)
+  const [isSavingBooking, setIsSavingBooking] = useState(false)
   const [selectedPendingBookingId, setSelectedPendingBookingId] = useState<string | null>(null)
   const [showAccessEditor, setShowAccessEditor] = useState(false)
   const [showGroupEditor, setShowGroupEditor] = useState(false)
@@ -1109,6 +1110,7 @@ function App() {
   }, [error])
 
   const skipBackdropClick = useRef(false)
+  const bookingSubmitLockRef = useRef(false)
 
   const fetchMembers = useCallback(async () => {
     const { data, error: membersError } = await supabase
@@ -3573,362 +3575,374 @@ function App() {
   }
 
   const handleSaveBooking = async () => {
-    setError(null)
-    setStatus(null)
-
-    if (isBookingReadOnlyRole) {
-      setError('Guests have read-only booking access.')
+    if (bookingSubmitLockRef.current) {
       return
     }
 
-    const selectedBoatIds = bookingBoatIds
-    if (selectedBoatIds.length === 0) {
-      setError('Select at least one boat for the booking.')
-      return
-    }
+    bookingSubmitLockRef.current = true
+    setIsSavingBooking(true)
 
-    const effectiveMemberId = isAdmin ? bookingMemberId : currentMember?.id ?? ''
-    if (!effectiveMemberId) {
-      setError('Select a member for the booking.')
-      return
-    }
+    return (async () => {
+      setError(null)
+      setStatus(null)
 
-    if (!isAdmin && editingBooking && !canEditBooking(editingBooking)) {
-      setError('You can only edit your own bookings.')
-      return
-    }
+      if (isBookingReadOnlyRole) {
+        setError('Guests have read-only booking access.')
+        return
+      }
 
-    const approvalRequiredBoatIds: string[] = []
-    for (const boatId of selectedBoatIds) {
-      const boat = boats.find((item) => item.id === boatId)
-      const usage = (boat?.usage_type ?? '').toLowerCase()
-      if (!isAdmin && !isCaptain && usage && usage !== 'general use') {
-        const memberId = currentMember?.id
-        if (!hasActiveCaptainPermission(boatId, memberId, selectedDate)) {
-          approvalRequiredBoatIds.push(boatId)
+      const selectedBoatIds = bookingBoatIds
+      if (selectedBoatIds.length === 0) {
+        setError('Select at least one boat for the booking.')
+        return
+      }
+
+      const effectiveMemberId = isAdmin ? bookingMemberId : currentMember?.id ?? ''
+      if (!effectiveMemberId) {
+        setError('Select a member for the booking.')
+        return
+      }
+
+      if (!isAdmin && editingBooking && !canEditBooking(editingBooking)) {
+        setError('You can only edit your own bookings.')
+        return
+      }
+
+      const approvalRequiredBoatIds: string[] = []
+      for (const boatId of selectedBoatIds) {
+        const boat = boats.find((item) => item.id === boatId)
+        const usage = (boat?.usage_type ?? '').toLowerCase()
+        if (!isAdmin && !isCaptain && usage && usage !== 'general use') {
+          const memberId = currentMember?.id
+          if (!hasActiveCaptainPermission(boatId, memberId, selectedDate)) {
+            approvalRequiredBoatIds.push(boatId)
+          }
         }
       }
-    }
 
-    const startDate = toDateTime(selectedDate, startTime)
-    const endDate = toDateTime(selectedDate, endTime)
-    const minStart = toDateTime(selectedDate, '07:30')
-    const now = new Date()
+      const startDate = toDateTime(selectedDate, startTime)
+      const endDate = toDateTime(selectedDate, endTime)
+      const minStart = toDateTime(selectedDate, '07:30')
+      const now = new Date()
 
-    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-      setError('Enter a valid start and end time.')
-      return
-    }
-
-    if (editingBooking && !canModifyBooking(editingBooking)) {
-      setError('Past bookings and bookings waiting for confirmation cannot be modified.')
-      return
-    }
-
-    if (startDate < now) {
-      setError('You cannot create or move a booking into the past.')
-      return
-    }
-
-    if (startDate < minStart) {
-      const message = 'Start time must be 07:30 or later.'
-      setError(null)
-      window.alert(message)
-      return
-    }
-
-    if (endDate <= startDate) {
-      setError('End time must be after start time.')
-      return
-    }
-
-    let raceEventConflictBoatIds: string[] = []
-    try {
-      raceEventConflictBoatIds = await fetchRaceEventConflictingBoatIds(selectedDate, selectedBoatIds)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to check race event conflicts.')
-      return
-    }
-
-    if (raceEventConflictBoatIds.length > 0) {
-      const conflictNames = raceEventConflictBoatIds
-        .map((boatId) => boats.find((boat) => boat.id === boatId)?.name ?? 'Boat')
-      setError(null)
-      window.alert(`Race event conflict for: ${conflictNames.join(', ')}.`)
-      return
-    }
-
-    const conflictQuery = supabase
-      .from('bookings')
-      .select('id, booking_group_id, boat_id')
-      .in('boat_id', selectedBoatIds)
-      .lt('start_time', endDate.toISOString())
-      .gt('end_time', startDate.toISOString())
-
-    const { data: conflicts, error: conflictError } = await conflictQuery
-
-    if (conflictError) {
-      setError(conflictError.message)
-      return
-    }
-
-    const filteredConflicts = (conflicts ?? []).filter((row: { id: string; booking_group_id?: string | null }) => {
-      if (!editingBooking) {
-        return true
-      }
-      const bookingIds = new Set(editingBooking.booking_ids ?? [editingBooking.id])
-      return !bookingIds.has(row.id)
-    })
-
-    const templateConflicts = templateBookings.filter((template) => {
-      if (!template.boat_id) {
-        return false
-      }
-      if (!selectedBoatIds.includes(template.boat_id)) {
-        return false
-      }
-      const startTime = normalizeTime(template.start_time)
-      const endTime = normalizeTime(template.end_time)
-      const templateStart = new Date(`${selectedDate}T${startTime}:00`)
-      const templateEnd = new Date(`${selectedDate}T${endTime}:00`)
-      return templateStart < endDate && templateEnd > startDate
-    })
-
-    if (templateConflicts.length > 0) {
-      const names = templateConflicts
-        .map((template) => boats.find((boat) => boat.id === template.boat_id)?.name ?? 'Boat')
-        .filter(Boolean)
-      const message = `Default booking conflict for: ${names.join(', ')}.`
-      setError(null)
-      window.alert(message)
-      return
-    }
-
-    if (filteredConflicts.length > 0) {
-      const conflictNames = Array.from(
-        new Set(
-          filteredConflicts
-            .map((row: { boat_id?: string }) =>
-              boats.find((boat) => boat.id === row.boat_id)?.name ?? null,
-            )
-            .filter(Boolean),
-        ),
-      )
-      const message = `Boat already booked: ${conflictNames.join(', ')}.`
-      setError(null)
-      window.alert(message)
-      return
-    }
-
-    if (editingBooking && approvalRequiredBoatIds.length > 0) {
-      window.alert('This captain permission booking requires validation first. Create a new request instead.')
-      return
-    }
-
-    if (editingBooking) {
-      const existingIds = editingBooking.booking_ids ?? [editingBooking.id]
-      const bookingGroupId = editingBooking.booking_group_id ?? editingBooking.id
-      const sharedPayload = {
-        member_id: effectiveMemberId,
-        start_time: startDate.toISOString(),
-        end_time: endDate.toISOString(),
-        booking_group_id: bookingGroupId,
+      if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+        setError('Enter a valid start and end time.')
+        return
       }
 
-      for (let index = 0; index < selectedBoatIds.length; index += 1) {
-        const boatId = selectedBoatIds[index]
-        const targetId = existingIds[index]
-        if (targetId) {
-          const { error: updateError } = await supabase
-            .from('bookings')
-            .update({
+      if (editingBooking && !canModifyBooking(editingBooking)) {
+        setError('Past bookings and bookings waiting for confirmation cannot be modified.')
+        return
+      }
+
+      if (startDate < now) {
+        setError('You cannot create or move a booking into the past.')
+        return
+      }
+
+      if (startDate < minStart) {
+        const message = 'Start time must be 07:30 or later.'
+        setError(null)
+        window.alert(message)
+        return
+      }
+
+      if (endDate <= startDate) {
+        setError('End time must be after start time.')
+        return
+      }
+
+      let raceEventConflictBoatIds: string[] = []
+      try {
+        raceEventConflictBoatIds = await fetchRaceEventConflictingBoatIds(selectedDate, selectedBoatIds)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unable to check race event conflicts.')
+        return
+      }
+
+      if (raceEventConflictBoatIds.length > 0) {
+        const conflictNames = raceEventConflictBoatIds
+          .map((boatId) => boats.find((boat) => boat.id === boatId)?.name ?? 'Boat')
+        setError(null)
+        window.alert(`Race event conflict for: ${conflictNames.join(', ')}.`)
+        return
+      }
+
+      const conflictQuery = supabase
+        .from('bookings')
+        .select('id, booking_group_id, boat_id')
+        .in('boat_id', selectedBoatIds)
+        .lt('start_time', endDate.toISOString())
+        .gt('end_time', startDate.toISOString())
+
+      const { data: conflicts, error: conflictError } = await conflictQuery
+
+      if (conflictError) {
+        setError(conflictError.message)
+        return
+      }
+
+      const filteredConflicts = (conflicts ?? []).filter((row: { id: string; booking_group_id?: string | null }) => {
+        if (!editingBooking) {
+          return true
+        }
+        const bookingIds = new Set(editingBooking.booking_ids ?? [editingBooking.id])
+        return !bookingIds.has(row.id)
+      })
+
+      const templateConflicts = templateBookings.filter((template) => {
+        if (!template.boat_id) {
+          return false
+        }
+        if (!selectedBoatIds.includes(template.boat_id)) {
+          return false
+        }
+        const startTime = normalizeTime(template.start_time)
+        const endTime = normalizeTime(template.end_time)
+        const templateStart = new Date(`${selectedDate}T${startTime}:00`)
+        const templateEnd = new Date(`${selectedDate}T${endTime}:00`)
+        return templateStart < endDate && templateEnd > startDate
+      })
+
+      if (templateConflicts.length > 0) {
+        const names = templateConflicts
+          .map((template) => boats.find((boat) => boat.id === template.boat_id)?.name ?? 'Boat')
+          .filter(Boolean)
+        const message = `Default booking conflict for: ${names.join(', ')}.`
+        setError(null)
+        window.alert(message)
+        return
+      }
+
+      if (filteredConflicts.length > 0) {
+        const conflictNames = Array.from(
+          new Set(
+            filteredConflicts
+              .map((row: { boat_id?: string }) =>
+                boats.find((boat) => boat.id === row.boat_id)?.name ?? null,
+              )
+              .filter(Boolean),
+          ),
+        )
+        const message = `Boat already booked: ${conflictNames.join(', ')}.`
+        setError(null)
+        window.alert(message)
+        return
+      }
+
+      if (editingBooking && approvalRequiredBoatIds.length > 0) {
+        window.alert('This captain permission booking requires validation first. Create a new request instead.')
+        return
+      }
+
+      if (editingBooking) {
+        const existingIds = editingBooking.booking_ids ?? [editingBooking.id]
+        const bookingGroupId = editingBooking.booking_group_id ?? editingBooking.id
+        const sharedPayload = {
+          member_id: effectiveMemberId,
+          start_time: startDate.toISOString(),
+          end_time: endDate.toISOString(),
+          booking_group_id: bookingGroupId,
+        }
+
+        for (let index = 0; index < selectedBoatIds.length; index += 1) {
+          const boatId = selectedBoatIds[index]
+          const targetId = existingIds[index]
+          if (targetId) {
+            const { error: updateError } = await supabase
+              .from('bookings')
+              .update({
+                ...sharedPayload,
+                boat_id: boatId,
+              })
+              .eq('id', targetId)
+
+            if (updateError) {
+              setError(updateError.message)
+              return
+            }
+          } else {
+            const { error: insertError } = await supabase.from('bookings').insert({
               ...sharedPayload,
               boat_id: boatId,
             })
-            .eq('id', targetId)
 
-          if (updateError) {
-            setError(updateError.message)
+            if (insertError) {
+              setError(insertError.message)
+              return
+            }
+          }
+        }
+
+        if (existingIds.length > selectedBoatIds.length) {
+          const idsToDelete = existingIds.slice(selectedBoatIds.length)
+          const { error: deleteError } = await supabase.from('bookings').delete().in('id', idsToDelete)
+          if (deleteError) {
+            setError(deleteError.message)
             return
           }
-        } else {
-          const { error: insertError } = await supabase.from('bookings').insert({
-            ...sharedPayload,
-            boat_id: boatId,
-          })
+        }
+
+        setStatus('Booking updated.')
+      } else {
+        const bookingGroupId = crypto.randomUUID()
+        const directBookingBoatIds = selectedBoatIds.filter(
+          (boatId) => !approvalRequiredBoatIds.includes(boatId),
+        )
+        const createdBookingIds: string[] = []
+        const inserts = directBookingBoatIds.map((boatId) => ({
+          booking_group_id: bookingGroupId,
+          boat_id: boatId,
+          member_id: effectiveMemberId,
+          start_time: startDate.toISOString(),
+          end_time: endDate.toISOString(),
+        }))
+
+        if (inserts.length > 0) {
+          const { data: insertedBookings, error: insertError } = await supabase
+            .from('bookings')
+            .insert(inserts)
+            .select('id')
 
           if (insertError) {
             setError(insertError.message)
             return
           }
-        }
-      }
 
-      if (existingIds.length > selectedBoatIds.length) {
-        const idsToDelete = existingIds.slice(selectedBoatIds.length)
-        const { error: deleteError } = await supabase.from('bookings').delete().in('id', idsToDelete)
-        if (deleteError) {
-          setError(deleteError.message)
-          return
-        }
-      }
-
-      setStatus('Booking updated.')
-    } else {
-      const bookingGroupId = crypto.randomUUID()
-      const directBookingBoatIds = selectedBoatIds.filter(
-        (boatId) => !approvalRequiredBoatIds.includes(boatId),
-      )
-      const createdBookingIds: string[] = []
-      const inserts = directBookingBoatIds.map((boatId) => ({
-        booking_group_id: bookingGroupId,
-        boat_id: boatId,
-        member_id: effectiveMemberId,
-        start_time: startDate.toISOString(),
-        end_time: endDate.toISOString(),
-      }))
-
-      if (inserts.length > 0) {
-        const { data: insertedBookings, error: insertError } = await supabase
-          .from('bookings')
-          .insert(inserts)
-          .select('id')
-
-        if (insertError) {
-          setError(insertError.message)
-          return
+          createdBookingIds.push(...(insertedBookings ?? []).map((booking) => booking.id))
         }
 
-        createdBookingIds.push(...(insertedBookings ?? []).map((booking) => booking.id))
-      }
+        if (approvalRequiredBoatIds.length > 0) {
+          const requestsPayload = approvalRequiredBoatIds.map((boatId) => ({
+            boat_id: boatId,
+            member_id: effectiveMemberId,
+            requested_start_time: startDate.toISOString(),
+            requested_end_time: endDate.toISOString(),
+            status: 'pending',
+          }))
 
-      if (approvalRequiredBoatIds.length > 0) {
-        const requestsPayload = approvalRequiredBoatIds.map((boatId) => ({
-          boat_id: boatId,
-          member_id: effectiveMemberId,
-          requested_start_time: startDate.toISOString(),
-          requested_end_time: endDate.toISOString(),
-          status: 'pending',
-        }))
-
-        const { data: createdRequests, error: requestError } = await supabase
-          .from('captain_booking_requests')
-          .insert(requestsPayload)
-          .select('id')
-
-        if (requestError) {
-          setError(requestError.message)
-          return
-        }
-
-        const accessToken = await getAccessToken()
-        if (accessToken && createdRequests && createdRequests.length > 0) {
-          await fetch('/api/push/notify-captain-booking-request', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${accessToken}`,
-            },
-            body: JSON.stringify({
-              requestIds: createdRequests.map((row) => row.id),
-            }),
-          }).catch(() => undefined)
-        }
-      }
-
-      if (templateBookingDraft) {
-        try {
-          await finalizeTemplateBookingDraft(createdBookingIds)
-        } catch (err) {
-          setError(err instanceof Error ? err.message : 'Unable to confirm template booking.')
-          return
-        }
-      }
-
-      if (inserts.length > 0 && approvalRequiredBoatIds.length > 0) {
-        setStatus(
-          `${inserts.length} booking(s) confirmed, ${approvalRequiredBoatIds.length} sent for captain approval.`,
-        )
-      } else if (approvalRequiredBoatIds.length > 0) {
-        setStatus(`Request sent for captain approval (${approvalRequiredBoatIds.length}).`)
-      } else {
-        setStatus(inserts.length > 1 ? 'Bookings confirmed!' : 'Booking confirmed!')
-      }
-    }
-
-    resetBookingForm()
-
-    const daysToLoad = 7
-    const dayStart = new Date(`${selectedDate}T00:00:00`)
-    const dayEnd = new Date(dayStart)
-    dayEnd.setDate(dayEnd.getDate() + daysToLoad)
-
-    const bookingsQuery = supabase
-      .from('bookings')
-      .select(BOOKING_SELECT)
-      .lt('start_time', dayEnd.toISOString())
-      .gt('end_time', dayStart.toISOString())
-      .order('start_time', { ascending: true })
-    const approvalRequestsQuery = currentMember
-      ? (() => {
-          let query = supabase
+          const { data: createdRequests, error: requestError } = await supabase
             .from('captain_booking_requests')
-            .select(
-              'id, boat_id, member_id, requested_start_time, requested_end_time, requester_member:members!captain_booking_requests_member_id_fkey(name,email), boats(name,type)',
-            )
-            .eq('status', 'pending')
-            .lt('requested_start_time', dayEnd.toISOString())
-            .gt('requested_end_time', dayStart.toISOString())
-            .order('requested_start_time', { ascending: true })
-          if (!canApproveCaptainBookingRequests) {
-            query = query.eq('member_id', currentMember.id)
+            .insert(requestsPayload)
+            .select('id')
+
+          if (requestError) {
+            setError(requestError.message)
+            return
           }
-          return query
-        })()
-      : Promise.resolve({ data: [], error: null })
-    const [bookingsResult, approvalRequestsResult] = await Promise.all([
-      bookingsQuery,
-      approvalRequestsQuery,
-    ])
 
-    if (bookingsResult.error) {
-      setError(bookingsResult.error.message)
-      return
-    }
-    if (approvalRequestsResult.error) {
-      setError(approvalRequestsResult.error.message)
-      return
-    }
+          const accessToken = await getAccessToken()
+          if (accessToken && createdRequests && createdRequests.length > 0) {
+            await fetch('/api/push/notify-captain-booking-request', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${accessToken}`,
+              },
+              body: JSON.stringify({
+                requestIds: createdRequests.map((row) => row.id),
+              }),
+            }).catch(() => undefined)
+          }
+        }
 
-    setBookings(groupBookings((bookingsResult.data ?? []) as Booking[]))
-    const pendingApprovals = (approvalRequestsResult.data ?? []) as Array<{
-      id: string
-      boat_id: string
-      member_id: string
-      requested_start_time: string
-      requested_end_time: string
-      boats?: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null
-      requester_member?:
-        | { name: string; email?: string | null }
-        | { name: string; email?: string | null }[]
-        | null
-    }>
-    setPendingApprovalScheduleItems(
-      pendingApprovals.map((row) => ({
-        id: `approval-${row.id}`,
-        captainRequestId: row.id,
-        boat_id: row.boat_id,
-        member_id: row.member_id,
-        start_time: row.requested_start_time,
-        end_time: row.requested_end_time,
-        isTemplate: false,
-        pendingApproval: true,
-        boats: Array.isArray(row.boats) ? row.boats[0] ?? null : row.boats ?? null,
-        members: Array.isArray(row.requester_member)
-          ? row.requester_member[0] ?? null
-          : row.requester_member ?? null,
-      })),
-    )
+        if (templateBookingDraft) {
+          try {
+            await finalizeTemplateBookingDraft(createdBookingIds)
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'Unable to confirm template booking.')
+            return
+          }
+        }
+
+        if (inserts.length > 0 && approvalRequiredBoatIds.length > 0) {
+          setStatus(
+            `${inserts.length} booking(s) confirmed, ${approvalRequiredBoatIds.length} sent for captain approval.`,
+          )
+        } else if (approvalRequiredBoatIds.length > 0) {
+          setStatus(`Request sent for captain approval (${approvalRequiredBoatIds.length}).`)
+        } else {
+          setStatus(inserts.length > 1 ? 'Bookings confirmed!' : 'Booking confirmed!')
+        }
+      }
+
+      resetBookingForm()
+
+      const daysToLoad = 7
+      const dayStart = new Date(`${selectedDate}T00:00:00`)
+      const dayEnd = new Date(dayStart)
+      dayEnd.setDate(dayEnd.getDate() + daysToLoad)
+
+      const bookingsQuery = supabase
+        .from('bookings')
+        .select(BOOKING_SELECT)
+        .lt('start_time', dayEnd.toISOString())
+        .gt('end_time', dayStart.toISOString())
+        .order('start_time', { ascending: true })
+      const approvalRequestsQuery = currentMember
+        ? (() => {
+            let query = supabase
+              .from('captain_booking_requests')
+              .select(
+                'id, boat_id, member_id, requested_start_time, requested_end_time, requester_member:members!captain_booking_requests_member_id_fkey(name,email), boats(name,type)',
+              )
+              .eq('status', 'pending')
+              .lt('requested_start_time', dayEnd.toISOString())
+              .gt('requested_end_time', dayStart.toISOString())
+              .order('requested_start_time', { ascending: true })
+            if (!canApproveCaptainBookingRequests) {
+              query = query.eq('member_id', currentMember.id)
+            }
+            return query
+          })()
+        : Promise.resolve({ data: [], error: null })
+      const [bookingsResult, approvalRequestsResult] = await Promise.all([
+        bookingsQuery,
+        approvalRequestsQuery,
+      ])
+
+      if (bookingsResult.error) {
+        setError(bookingsResult.error.message)
+        return
+      }
+      if (approvalRequestsResult.error) {
+        setError(approvalRequestsResult.error.message)
+        return
+      }
+
+      setBookings(groupBookings((bookingsResult.data ?? []) as Booking[]))
+      const pendingApprovals = (approvalRequestsResult.data ?? []) as Array<{
+        id: string
+        boat_id: string
+        member_id: string
+        requested_start_time: string
+        requested_end_time: string
+        boats?: { name: string; type?: string | null } | { name: string; type?: string | null }[] | null
+        requester_member?:
+          | { name: string; email?: string | null }
+          | { name: string; email?: string | null }[]
+          | null
+      }>
+      setPendingApprovalScheduleItems(
+        pendingApprovals.map((row) => ({
+          id: `approval-${row.id}`,
+          captainRequestId: row.id,
+          boat_id: row.boat_id,
+          member_id: row.member_id,
+          start_time: row.requested_start_time,
+          end_time: row.requested_end_time,
+          isTemplate: false,
+          pendingApproval: true,
+          boats: Array.isArray(row.boats) ? row.boats[0] ?? null : row.boats ?? null,
+          members: Array.isArray(row.requester_member)
+            ? row.requester_member[0] ?? null
+            : row.requester_member ?? null,
+        })),
+      )
+    })().finally(() => {
+      bookingSubmitLockRef.current = false
+      setIsSavingBooking(false)
+    })
   }
 
   const handleDeleteBooking = async () => {
@@ -7524,8 +7538,18 @@ function App() {
                   </div>
                   {!isEditingBookingLocked ? (
                     <>
-                      <button className="button primary" onClick={handleSaveBooking}>
-                        {editingBooking ? 'Save changes' : 'Validate booking'}
+                      <button
+                        className="button primary"
+                        onClick={handleSaveBooking}
+                        disabled={isSavingBooking}
+                      >
+                        {isSavingBooking
+                          ? editingBooking
+                            ? 'Saving...'
+                            : 'Validating...'
+                          : editingBooking
+                            ? 'Save changes'
+                            : 'Validate booking'}
                       </button>
                       {editingBooking ? (
                         <button
