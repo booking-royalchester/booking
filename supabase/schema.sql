@@ -167,6 +167,7 @@ create table if not exists captain_booking_requests (
   requested_start_time timestamptz not null,
   requested_end_time timestamptz not null,
   status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  review_reason text,
   decided_at timestamptz,
   decided_by_member_id uuid references members(id) on delete set null,
   booking_id uuid references bookings(id) on delete set null,

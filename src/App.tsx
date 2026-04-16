@@ -197,6 +197,7 @@ type CaptainBookingRequest = {
   requested_start_time: string
   requested_end_time: string
   status: 'pending' | 'approved' | 'rejected'
+  review_reason?: string | null
   decided_at?: string | null
   decided_by_member_id?: string | null
   booking_id?: string | null
@@ -840,6 +841,11 @@ function App() {
   const [captainBookingRequests, setCaptainBookingRequests] = useState<CaptainBookingRequest[]>([])
   const [selectedCaptainApprovalRequest, setSelectedCaptainApprovalRequest] =
     useState<CaptainBookingRequest | null>(null)
+  const [captainRejectionRequest, setCaptainRejectionRequest] = useState<CaptainBookingRequest | null>(
+    null,
+  )
+  const [captainRejectionReason, setCaptainRejectionReason] = useState('')
+  const [pendingCaptainDecisionId, setPendingCaptainDecisionId] = useState<string | null>(null)
   const [templateBookings, setTemplateBookings] = useState<TemplateBooking[]>([])
   const [templateSeasonSettings, setTemplateSeasonSettings] = useState<TemplateSeasonSettings | null>(
     null,
@@ -4957,102 +4963,190 @@ function App() {
       setError('Only captains or admins can approve these requests.')
       return
     }
+    if (pendingCaptainDecisionId) {
+      return
+    }
 
     setError(null)
     setStatus(null)
+    setPendingCaptainDecisionId(request.id)
 
-    const { data: bookingRow, error: bookingError } = await supabase
-      .from('bookings')
-      .insert({
-        boat_id: request.boat_id,
-        member_id: request.member_id,
-        start_time: request.requested_start_time,
-        end_time: request.requested_end_time,
-      })
-      .select('id')
-      .single()
+    try {
+      const { data: bookingRow, error: bookingError } = await supabase
+        .from('bookings')
+        .insert({
+          boat_id: request.boat_id,
+          member_id: request.member_id,
+          start_time: request.requested_start_time,
+          end_time: request.requested_end_time,
+        })
+        .select('id')
+        .single()
 
-    if (bookingError || !bookingRow) {
-      setError(bookingError?.message ?? 'Unable to create approved booking.')
-      return
+      if (bookingError || !bookingRow) {
+        setError(bookingError?.message ?? 'Unable to create approved booking.')
+        return
+      }
+
+      let updateError: { message: string } | null = null
+      const { error: updateWithReasonError } = await supabase
+        .from('captain_booking_requests')
+        .update({
+          status: 'approved',
+          decided_by_member_id: currentMember?.id ?? null,
+          decided_at: new Date().toISOString(),
+          booking_id: bookingRow.id,
+          review_reason: null,
+        })
+        .eq('id', request.id)
+
+      updateError = updateWithReasonError
+
+      if (updateWithReasonError?.message?.includes('review_reason')) {
+        const { error: fallbackUpdateError } = await supabase
+          .from('captain_booking_requests')
+          .update({
+            status: 'approved',
+            decided_by_member_id: currentMember?.id ?? null,
+            decided_at: new Date().toISOString(),
+            booking_id: bookingRow.id,
+          })
+          .eq('id', request.id)
+        updateError = fallbackUpdateError
+      }
+
+      if (updateError) {
+        setError(updateError.message)
+        return
+      }
+
+      const accessToken = await getAccessToken()
+      if (accessToken) {
+        await fetch('/api/push/notify-captain-booking-request', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            requestId: request.id,
+            decision: 'approved',
+          }),
+        }).catch(() => undefined)
+      }
+
+      setStatus('Booking request approved.')
+      setSelectedCaptainApprovalRequest(null)
+      setCaptainRejectionRequest(null)
+      setCaptainRejectionReason('')
+      await Promise.all([fetchCaptainBookingRequests(), refreshScheduleDay(selectedDate)])
+    } finally {
+      setPendingCaptainDecisionId(null)
     }
-
-    const { error: updateError } = await supabase
-      .from('captain_booking_requests')
-      .update({
-        status: 'approved',
-        decided_by_member_id: currentMember?.id ?? null,
-        decided_at: new Date().toISOString(),
-        booking_id: bookingRow.id,
-      })
-      .eq('id', request.id)
-
-    if (updateError) {
-      setError(updateError.message)
-      return
-    }
-
-    const accessToken = await getAccessToken()
-    if (accessToken) {
-      await fetch('/api/push/notify-captain-booking-request', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          requestId: request.id,
-          decision: 'approved',
-        }),
-      }).catch(() => undefined)
-    }
-
-    setStatus('Booking request approved.')
-    setSelectedCaptainApprovalRequest(null)
-    await Promise.all([fetchCaptainBookingRequests(), refreshScheduleDay(selectedDate)])
   }
 
-  const handleRejectCaptainBookingRequest = async (request: CaptainBookingRequest) => {
+  const openCaptainRejectionDialog = (request: CaptainBookingRequest) => {
+    setError(null)
+    setStatus(null)
+    setSelectedCaptainApprovalRequest(null)
+    setCaptainRejectionRequest(request)
+    setCaptainRejectionReason('')
+  }
+
+  const closeCaptainRejectionDialog = () => {
+    if (pendingCaptainDecisionId) {
+      return
+    }
+    setCaptainRejectionRequest(null)
+    setCaptainRejectionReason('')
+  }
+
+  const handleRejectCaptainBookingRequest = async (
+    request: CaptainBookingRequest,
+    rejectionReason: string,
+  ) => {
     if (!canApproveCaptainBookingRequests) {
       setError('Only captains or admins can approve these requests.')
       return
     }
-
-    setError(null)
-    setStatus(null)
-
-    const { error: updateError } = await supabase
-      .from('captain_booking_requests')
-      .update({
-        status: 'rejected',
-        decided_by_member_id: currentMember?.id ?? null,
-        decided_at: new Date().toISOString(),
-      })
-      .eq('id', request.id)
-
-    if (updateError) {
-      setError(updateError.message)
+    if (pendingCaptainDecisionId) {
       return
     }
 
-    const accessToken = await getAccessToken()
-    if (accessToken) {
-      await fetch('/api/push/notify-captain-booking-request', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          requestId: request.id,
-          decision: 'rejected',
-        }),
-      }).catch(() => undefined)
-    }
+    setError(null)
+    setStatus(null)
+    setPendingCaptainDecisionId(request.id)
+    const reason = rejectionReason.trim()
 
-    setStatus('Booking request rejected.')
-    setSelectedCaptainApprovalRequest(null)
-    await fetchCaptainBookingRequests()
+    try {
+      let updateError: { message: string } | null = null
+      const rejectedPayload = {
+        status: 'rejected',
+        decided_by_member_id: currentMember?.id ?? null,
+        decided_at: new Date().toISOString(),
+        review_reason: reason,
+      }
+
+      const { error: rejectWithReasonError } = await supabase
+        .from('captain_booking_requests')
+        .update(rejectedPayload)
+        .eq('id', request.id)
+
+      updateError = rejectWithReasonError
+
+      if (rejectWithReasonError?.message?.includes('review_reason')) {
+        const { error: fallbackUpdateError } = await supabase
+          .from('captain_booking_requests')
+          .update({
+            status: 'rejected',
+            decided_by_member_id: currentMember?.id ?? null,
+            decided_at: new Date().toISOString(),
+          })
+          .eq('id', request.id)
+        updateError = fallbackUpdateError
+      }
+
+      if (updateError) {
+        setError(updateError.message)
+        return
+      }
+
+      const accessToken = await getAccessToken()
+      if (accessToken) {
+        await fetch('/api/push/notify-captain-booking-request', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            requestId: request.id,
+            decision: 'rejected',
+            rejectionReason: reason,
+          }),
+        }).catch(() => undefined)
+      }
+
+      setStatus('Booking request rejected.')
+      setSelectedCaptainApprovalRequest(null)
+      setCaptainRejectionRequest(null)
+      setCaptainRejectionReason('')
+      await Promise.all([fetchCaptainBookingRequests(), refreshScheduleDay(selectedDate)])
+    } finally {
+      setPendingCaptainDecisionId(null)
+    }
+  }
+
+  const handleSubmitCaptainRejection = async () => {
+    if (!captainRejectionRequest) {
+      return
+    }
+    const reason = captainRejectionReason.trim()
+    if (!reason) {
+      setError('Please provide a reason for rejection.')
+      return
+    }
+    await handleRejectCaptainBookingRequest(captainRejectionRequest, reason)
   }
 
   const handleSaveAccess = async () => {
@@ -6087,16 +6181,18 @@ function App() {
                             <button
                               className="button primary"
                               type="button"
+                              disabled={pendingCaptainDecisionId === request.id}
                               onClick={() => handleApproveCaptainBookingRequest(request)}
                             >
-                              Approve booking
+                              {pendingCaptainDecisionId === request.id ? 'Approving...' : 'Approve booking'}
                             </button>
                             <button
                               className="button ghost danger"
                               type="button"
-                              onClick={() => handleRejectCaptainBookingRequest(request)}
+                              disabled={pendingCaptainDecisionId === request.id}
+                              onClick={() => openCaptainRejectionDialog(request)}
                             >
-                              Reject booking
+                              {pendingCaptainDecisionId === request.id ? 'Processing...' : 'Reject booking'}
                             </button>
                           </div>
                         </div>
@@ -7938,16 +8034,63 @@ function App() {
               <button
                 className="button primary"
                 type="button"
+                disabled={pendingCaptainDecisionId === selectedCaptainApprovalRequest.id}
                 onClick={() => handleApproveCaptainBookingRequest(selectedCaptainApprovalRequest)}
               >
-                Yes
+                {pendingCaptainDecisionId === selectedCaptainApprovalRequest.id ? 'Approving...' : 'Yes'}
               </button>
               <button
                 className="button ghost danger"
                 type="button"
-                onClick={() => handleRejectCaptainBookingRequest(selectedCaptainApprovalRequest)}
+                disabled={pendingCaptainDecisionId === selectedCaptainApprovalRequest.id}
+                onClick={() => openCaptainRejectionDialog(selectedCaptainApprovalRequest)}
               >
-                No
+                {pendingCaptainDecisionId === selectedCaptainApprovalRequest.id ? 'Processing...' : 'No'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {session && captainRejectionRequest ? (
+        <div className="modal-backdrop" onClick={closeCaptainRejectionDialog}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Reject booking request</h3>
+              <button className="button ghost" type="button" onClick={closeCaptainRejectionDialog}>
+                Close
+              </button>
+            </div>
+            <div className="form-grid">
+              <div className="field">
+                <span>Reason</span>
+                <textarea
+                  placeholder="Explain why this request is rejected"
+                  value={captainRejectionReason}
+                  maxLength={400}
+                  disabled={pendingCaptainDecisionId === captainRejectionRequest.id}
+                  onChange={(event) => setCaptainRejectionReason(event.target.value)}
+                />
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button
+                className="button ghost"
+                type="button"
+                disabled={pendingCaptainDecisionId === captainRejectionRequest.id}
+                onClick={closeCaptainRejectionDialog}
+              >
+                Cancel
+              </button>
+              <button
+                className="button ghost danger"
+                type="button"
+                disabled={pendingCaptainDecisionId === captainRejectionRequest.id}
+                onClick={handleSubmitCaptainRejection}
+              >
+                {pendingCaptainDecisionId === captainRejectionRequest.id
+                  ? 'Submitting...'
+                  : 'Submit rejection'}
               </button>
             </div>
           </div>

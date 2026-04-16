@@ -77,6 +77,8 @@ export default async function handler(req, res) {
   const decision = payload.decision === 'approved' || payload.decision === 'rejected' ? payload.decision : null
   if (decision) {
     const requestId = typeof payload.requestId === 'string' ? payload.requestId : null
+    const rejectionReason =
+      typeof payload.rejectionReason === 'string' ? payload.rejectionReason.trim().slice(0, 400) : ''
     if (!requestId) {
       res.status(400).json({ error: 'Missing requestId.' })
       return
@@ -131,7 +133,9 @@ export default async function handler(req, res) {
       body:
         decision === 'approved'
           ? `Your booking request for ${boatName} was approved.`
-          : `Your booking request for ${boatName} was rejected.`,
+          : rejectionReason
+            ? `Your booking request for ${boatName} was rejected. Reason: ${rejectionReason}`
+            : `Your booking request for ${boatName} was rejected.`,
       url: '/',
     })
 
